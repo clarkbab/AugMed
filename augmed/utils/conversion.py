@@ -1,0 +1,86 @@
+from typing import *
+
+from ..typing import *
+from .python import delegates_to
+
+def to_array(
+    data: bool | Number | str | List[bool | Number | str] | np.ndarray | torch.Tensor | torch.Size,
+    broadcast: int | None = None,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
+    ) -> np.ndarray | None:
+    if data is None:
+        return None
+
+    # Convert data to array.
+    if isinstance(data, (bool, float, int, str)):
+        data = np.array([data])
+    if isinstance(data, (list, tuple)):
+        data = np.array(data)
+    elif isinstance(data, torch.Size):
+        data = np.array(data)
+    elif isinstance(data, torch.Tensor):
+        data = data.cpu().numpy()
+
+    # Set data type.
+    if dtype is not None:
+        data = data.astype(dtype)
+
+    # Broadcast if required.
+    if broadcast is not None and len(data) == 1:
+        data = np.repeat(data, broadcast)
+
+    return data
+
+@delegates_to(to_array)
+def to_list(
+    data: bool | Number | str | List[bool | Number | str] | np.ndarray | torch.Tensor | torch.Size,
+    **kwargs,
+    ) -> List[bool | Number | str] | None:
+    if data is None:
+        return None 
+    return to_array(data, **kwargs).tolist()
+
+def to_tensor(
+    data: bool | Number | str | List[bool | Number | str | List[...]] | np.ndarray | torch.Tensor | torch.Size,
+    broadcast: int | None = None,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
+    ) -> torch.Tensor | None:
+    if data is None:
+        return None
+
+    # Convert to tensor.
+    if isinstance(data, (bool, float, int, str)):
+        device = torch.device('cpu') if device is None else device  
+        data = torch.tensor([data], device=device, dtype=dtype)
+    elif isinstance(data, (list, tuple, np.ndarray, torch.Size)):
+        device = torch.device('cpu') if device is None else device  
+        data = torch.tensor(data, device=device, dtype=dtype)
+    elif isinstance(data, torch.Tensor):
+        device = data.device if device is None else device
+        dtype = data.dtype if dtype is None else dtype
+        data = data.to(device=device, dtype=dtype)
+
+    # Broadcast if required.
+    if broadcast is not None and len(data) == 1:
+        data = data.repeat(broadcast)
+
+    return data
+
+@delegates_to(to_array)
+def to_tuple(
+    data: bool | Number | str | List[bool | Number | str] | np.ndarray | torch.Tensor | torch.Size,
+    decimals: int | None = None,
+    **kwargs,
+    ) -> Tuple[bool | Number | str, ...] | None:
+    if data is None:
+        return None 
+    # Convert to tuple.
+    data = tuple(to_array(data, **kwargs).tolist())
+
+    # Round elements if required.
+    if decimals is not None:
+        data = tuple(round(x, decimals) if isinstance(x, float) else x for x in data)
+
+    return data
