@@ -3,7 +3,8 @@ from typing import *
 from ...typing import *
 from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg
 from ...utils.conversion import to_tensor
-from ...utils.matrix import affine_origin, affine_spacing, create_eye, create_affine
+from ...utils.geometry import fov, fov_centre
+from ...utils.matrix import affine_origin, affine_spacing, create_affine
 from ..identity import Identity
 from .grid import RandomGridTransform, GridTransform
 
@@ -58,10 +59,10 @@ class Pad(GridTransform):
 
     def transform_grid(
         self,
-        size: SizeTensor,
-        affine: AffineTensor | None = None,
+        grid: SamplingGridTensor,
         **kwargs,
-        ) -> GridParamsTensor:
+        ) -> SamplingGridTensor:
+        size, affine = grid
         if self.__pad_add is not None:
             # Get the current FOV.
             fov_min, fov_max = fov(size, affine=affine)
@@ -77,7 +78,7 @@ class Pad(GridTransform):
                 fov_min = torch.round((fov_min - origin) / spacing)
                 fov_max = torch.round((fov_max - origin) / spacing)
 
-                # Convert 'crop_remove' from mm -> vox.
+                # Convert 'pad_add' from mm -> vox.
                 spacing = affine_spacing(affine)
                 origin = affine_origin(affine)
                 pad_add_min = torch.round(pad_add_min / spacing)
@@ -133,9 +134,9 @@ class Pad(GridTransform):
     def transform_points(
         self,
         points: Points,
-        size: Size | None = None,
-        affine: Affine | None = None,
+        # Can a pad ever move points offgrid??
         filter_offgrid: bool = True,
+        grid: SamplingGrid | None = None,   # Required for 'image-centre' pad centre.
         return_filtered: bool = False,
         **kwargs,
         ) -> Points:
@@ -144,6 +145,7 @@ class Pad(GridTransform):
             return_type = 'numpy'
         else:
             return_type = 'torch'
+        size, affine = grid if grid is not None else (None, None)
         size = to_tensor(size, device=points.device, dtype=points.dtype)
         affine = to_tensor(affine, device=points.device, dtype=points.dtype)
 

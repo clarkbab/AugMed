@@ -2,6 +2,7 @@ from typing import *
 
 from ..typing import *
 from ..utils.args import arg_to_list
+from ..utils.conversion import to_tensor
 from .transform import Transform
 
 class Identity(Transform):
@@ -13,7 +14,7 @@ class Identity(Transform):
         image: Image | List[Image],
         affine: Affine | List[Affine] | None = None,
         return_grid: bool = False,
-        ) -> Image | List[Image | List[GridParams]]:
+        ) -> Image | List[Image | List[SamplingGrid]]:
         images, images_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
         sizes = [i.shape[-self._dim:] for i in images]
         affines = arg_to_list(affine, (np.ndarray, torch.Tensor, None), broadcast=len(images))
@@ -32,10 +33,9 @@ class Identity(Transform):
     def transform_points(
         self,
         points: Points,
-        size: Size | None = None,
-        affine: Affine | None = None,
         return_filtered: bool = False,
-        **kwargs) -> Points:
+        **kwargs,
+        ) -> Points:
         if return_filtered:
             # Create filtered indices to match API.
             indices = to_tensor([], device=points.device, dtype=torch.int32) if isinstance(points, torch.Tensor) else np.array([])

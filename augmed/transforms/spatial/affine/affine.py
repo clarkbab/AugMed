@@ -74,12 +74,11 @@ class Affine(SpatialTransform):
     def backward_transform_points(
         self,
         points: PointsTensor,
-        affine: AffineTensor | None = None,
-        size: SizeTensor | None = None,
+        grid: SamplingGrid | None = None,   # Required for 'image-centre' rotation/scale.
         **kwargs,
         ) -> PointsTensor:
         # Get homogeneous matrix.
-        matrix_a = self.get_affine_backward_transform(points.device, affine=affine, size=size)
+        matrix_a = self.get_affine_backward_transform(points.device, grid=grid)
 
         # Transform points.
         points_h = torch.hstack([points, torch.ones((points.shape[0], 1), device=points.device, dtype=points.dtype)])  # Move to homogeneous coords.
@@ -111,11 +110,11 @@ class Affine(SpatialTransform):
     def get_affine_backward_transform(
         self,
         device: torch.device,
-        affine: AffineTensor | None = None,
-        size: SizeTensor | None = None,
+        grid: SamplingGrid | None = None,   # Required for 'image-centre' rotation/scale.
         **kwargs,
         ) -> AffineTensor:
         # Get rotation matrices.
+        size, affine = grid if grid is not None else (None, None)
         if self._rotation is not None:
             # Get centre of rotation.
             if self._rotation_centre == 'image-centre':
@@ -163,18 +162,17 @@ class Affine(SpatialTransform):
     def get_affine_transform(
         self,
         device: torch.device,
-        affine: AffineTensor | None = None,
-        size: SizeTensor | None = None,
+        grid: SamplingGrid | None = None,   # Required for 'image-centre' rotation/scale.
         **kwargs,
         ) -> AffineTensor:
         print('getting rotation forward transform')
-
+        size, affine = grid if grid is not None else (None, None)
         # Get rotation matrices.
         if self._rotation is not None:
             # Get centre of rotation.
             if self._rotation_centre == 'image-centre':
                 if size is None or affine is None:
-                    raise ValueError(f"Grid params (size/affine) are required when performing rotation around image centre (centre='image-centre').")
+                    raise ValueError(f"'grid' is required when performing rotation around image centre (centre='image-centre').")
                 rot_centre = fov_centre(size, affine=affine)
             else:
                 rot_centre = self._rotation_centre.to(device)
@@ -189,7 +187,7 @@ class Affine(SpatialTransform):
         if self._scaling is not None:
             if self._scaling_centre == 'image-centre':
                 if size is None or affine is None:
-                    raise ValueError(f"Grid params (size/affine) are required when performing scaling around image centre (centre='image-centre').")
+                    raise ValueError(f"'grid' is required when performing scaling around image centre (centre='image-centre').")
                 scale_centre = fov_centre(size, affine=affine)
             else:
                 scale_centre = self._scaling_centre.to(device)
@@ -244,9 +242,8 @@ class Affine(SpatialTransform):
     def transform_points(
         self,
         points: Points,
-        size: Size | None = None,
-        affine: Affine | None = None,
         filter_offgrid: bool = True,
+        grid: SamplingGrid | None = None,   # Required for 'image-centre' rotation/scale.
         return_filtered: bool = False,
         **kwargs,
         ) -> Points | Tuple[Points, np.ndarray | torch.Tensor]:
@@ -255,11 +252,12 @@ class Affine(SpatialTransform):
             return_type = 'numpy'
         else:
             return_type = 'torch'
+        size, affine = grid if grid is not None else (None, None)
         size = to_tensor(size, device=points.device, dtype=points.dtype)
         affine = to_tensor(affine, device=points.device, dtype=points.dtype)
 
         # Get homogeneous matrix.
-        matrix_a = self.get_affine_transform(points.device, size=size, affine=affine)
+        matrix_a = self.get_affine_transform(points.device, grid=(size, affine))
 
         # Perform forward transform.
         points_h = torch.hstack([points, torch.ones((points.shape[0], 1), device=points.device, dtype=points.dtype)])  # Move to homogeneous coords.

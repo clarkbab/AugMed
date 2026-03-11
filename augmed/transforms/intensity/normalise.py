@@ -3,7 +3,7 @@ from typing import *
 from ...typing import *
 from .intensity import IntensityTransform, RandomIntensityTransform
 
-class RandomNorm(RandomIntensityTransform):
+class RandomNormalise(RandomIntensityTransform):
     def __init__(
         self,
         **kwargs,
@@ -11,10 +11,10 @@ class RandomNorm(RandomIntensityTransform):
         super().__init__(**kwargs)
         # Randomise mean/std using some range.
 
-    def freeze(self) -> 'Norm':
+    def freeze(self) -> 'Normalise':
         pass
 
-class Norm(IntensityTransform):
+class Normalise(IntensityTransform):
     def __init__(
         self,
         mean: Number = 0,

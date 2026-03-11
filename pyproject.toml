@@ -5,32 +5,22 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "augmed"
 version = "0.1.0"
-description = "GPU-accelerated medical image augmentation with point transforms and single-resample pipelines."
+description = "GPU-accelerated medical image augmentation with point cloud transforms and single-resample pipelines."
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 keywords = ["medical-imaging", "augmentation", "pytorch", "transforms", "data-augmentation"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Science/Research",
-    "Topic :: Scientific/Engineering :: Medical Science Apps.",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-]
+classifiers = []
 dependencies = [
-    "numpy",
-    "torch",
     "jaxtyping",
+    "numpy",
     "pyyaml",
+    "torch",
 ]
 
 [project.urls]
-Homepage = "https://github.com/brettkoonce/augmed"
-Repository = "https://github.com/brettkoonce/augmed"
+Homepage = "https://github.com/clarkbab/augmed"
+Repository = "https://github.com/clarkbab/augmed"
 
 [tool.setuptools.packages.find]
 include = ["augmed*"]

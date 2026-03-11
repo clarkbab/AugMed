@@ -13,10 +13,9 @@ class GridTransform(Transform):
 
     def transform_grid(
         self,
-        size: SizeTensor,
-        affine: AffineTensor | None = None,
+        *args,
         **kwargs,
-        ) -> GridParamsTensor:
+        ) -> SamplingGridTensor:
         raise ValueError("Subclasses of 'GridTransform' must implement 'transform_grid' method.")
 
     # Just removes voxels outside the transformed FOV.
@@ -29,12 +28,11 @@ class GridTransform(Transform):
         image: Image | List[Image],
         affine: Affine | List[Affine] = None,
         return_grid: bool = False,
-        ) -> Image | List[Image | List[GridParams]]:
+        ) -> Image | List[Image | List[SamplingGrid]]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
         return_types = ['numpy' if isinstance(i, np.ndarray) else 'torch' for i in images]
         affines = arg_to_list(affine, (np.ndarray, torch.Tensor, None), broadcast=len(images))
-        images = [to_tensor(i) for i in images]
-        devices = [i.device for i in images]
+        images = [to_tensor(i, device=self._device) for i in images]
         dims = [len(i.shape) for i in images]
         if self._dim == 2:
             for i, d in enumerate(dims):
@@ -43,12 +41,12 @@ class GridTransform(Transform):
             for i, d in enumerate(dims):
                 assert d in [3, 4, 5], f"Expected 3-5D image (3D spatial, optional batch/channel), got {d}D for image {i}."
         sizes = [to_tensor(i.shape[-self._dim:], device=i.device, dtype=torch.int32) for i in images]
-        affines = [to_tensor(a, device=d, dtype=torch.float32) if a is not None else create_affine(spacing=(1,) * self._dim, origin=(0,) * self._dim) for a, i in zip(affines, devices)]
+        affines = [to_tensor(a, device=i.device, dtype=torch.float32) if a is not None else create_affine(spacing=(1,) * self._dim, origin=(0,) * self._dim) for a, i in zip(affines, images)]
 
         # Crop images.
         image_ts = []
         grid_ts = []
-        for image, dim, s, a, rt in zip(images, dims, sizes, affines, return_types):
+        for image, s, a, rt in zip(images, sizes, affines, return_types):
             # Get new FOV.
             grid_t = self.transform_grid(s, affine=a)
 
@@ -93,8 +91,7 @@ class RandomGridTransform(RandomTransform, GridTransform):
 
     def transform_grid(
         self,
-        size: SizeTensor,
-        affine: AffineTensor | None = None,
+        *args,
         **kwargs,
-        ) -> GridParamsTensor:
-        return self.freeze().transform_grid(size, affine=affine, **kwargs)
+        ) -> SamplingGridTensor:
+        return self.freeze().transform_grid(*args, **kwargs)

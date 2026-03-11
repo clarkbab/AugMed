@@ -10,10 +10,12 @@ from ..utils.args import alias_kwargs, arg_to_list
 class Transform:
     def __init__(
         self,
+        device: torch.device | Literal['cpu', 'cuda'] | None = None,
         dim: Dim = 3,
         verbose: bool = False,
         ) -> None:
         assert dim in [2, 3], "Only 2D and 3D flips are supported."
+        self._device = torch.device(device) if isinstance(device, str) else device
         self._dim = dim
         self._verbose = verbose
     
@@ -21,7 +23,7 @@ class Transform:
         self,
         *args,
         **kwargs,
-        ) -> Image | Points | List[Image | Points | List[GridParams] | TransformParams]:
+        ) -> Image | Points | List[Image | Points | List[SamplingGrid] | TransformParams]:
         return self.transform(*args, **kwargs)
 
     @property
@@ -37,9 +39,18 @@ class Transform:
     def __repr__(self) -> str:
         return str(self)
 
+    # Can be called by Pipeline to set sub-transforms devices.
+    def set_device(
+        self,
+        device: torch.device | Literal['cpu', 'cuda'] | None,
+        ) -> None:
+        self._device = torch.device(device) if isinstance(device, str) else device
+
+    # Can be called by Pipeline to set sub-transforms dims.
     def set_dim(
         self,
-        dim: Dim) -> None:
+        dim: Dim,
+        ) -> None:
         assert dim in [2, 3], "Only 2D and 3D transforms are supported."
         self._dim = dim
 
@@ -48,6 +59,7 @@ class Transform:
         class_name: str,
         params: Dict[str, Any],
         ) -> str:
+        params['device'] = self._device
         params['dim'] = self._dim
         return f"{class_name}({', '.join([f'{k}={v}' for k, v in params.items()])})"
 
@@ -73,7 +85,7 @@ class Transform:
         filter_offgrid: bool = True,
         return_grid: bool = False,
         return_params: bool = False,
-        ) -> Image | Points | List[Image | Points | List[GridParams] | TransformParams]:
+        ) -> Image | Points | List[Image | Points | List[SamplingGrid] | TransformParams]:
         datas, data_was_single = arg_to_list(data, (np.ndarray, torch.Tensor), return_expanded=True)
         affines = arg_to_list(affine, (np.ndarray, torch.Tensor, None), broadcast=len(datas))
         sizes = arg_to_list(size, (tuple, np.ndarray, torch.Tensor, None), broadcast=len(datas), iter_types=(np.ndarray, torch.Tensor))
@@ -158,12 +170,12 @@ class Transform:
         self,
         *args,
         **kwargs,
-        ) -> Image | List[Image | List[GridParams]]:
+        ) -> Image | List[Image | List[SamplingGrid]]:
         raise ValueError("Subclasses of 'Transform' must implement 'transform_image' method.")
 
     def transform_points(
         self,
-        points: Points,
+        *args,
         **kwargs,
         ) -> Points:
         raise ValueError("Subclasses of 'Transform' must implement 'transform_points' method.")
@@ -206,7 +218,7 @@ class RandomTransform(Transform):
         *args,
         return_params: bool = False,
         **kwargs,
-        ) -> Image | Points | List[Image | Points | List[GridParams] | TransformParams]:
+        ) -> Image | Points | List[Image | Points | List[SamplingGrid] | TransformParams]:
         t_frozen = self.freeze()
         results = t_frozen.transform(*args, **kwargs)
 
@@ -224,7 +236,7 @@ class RandomTransform(Transform):
         *args,
         return_params: bool = False,
         **kwargs,
-        ) -> Image | List[Image | List[GridParams] | TransformParams]:
+        ) -> Image | List[Image | List[SamplingGrid] | TransformParams]:
         t_frozen = self.freeze()
         results = t_frozen.transform_image(*args, **kwargs)
 

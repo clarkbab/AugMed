@@ -15,6 +15,7 @@ from .intensity import IntensityTransform
 from .spatial import Affine, SpatialTransform
 from .transform import RandomTransform, Transform
 
+# This shouldn't be instantiated by the user.
 # FrozenPipeline is needed so that it can inherit the 'Transform.transform' method,
 # which expects to be called only on deterministic transforms (as image and points
 # transorms are called separately and should apply the same transforms).
@@ -38,7 +39,7 @@ class FrozenPipeline(Transform):
         self,
         transforms: List[Transform],     # TODO: SpatialTransforms?
         points: PointsTensor,
-        grids: List[GridParams],     # These are the input grids to each transform - required by some, e.g. Rotate.
+        grids: List[SamplingGrid],     # These are the input grids to each transform - required by some, e.g. Rotate.
         **kwargs,
         ) -> PointsTensor:
         points_t = points
@@ -86,6 +87,7 @@ class FrozenPipeline(Transform):
 
         return points_t
 
+    # Gives us "pipeline[i]" access to transforms.
     def __getitem__(
         self,
         i: int,
@@ -131,7 +133,7 @@ class FrozenPipeline(Transform):
         self,
         size: SizeTensor,
         affine: AffineTensor | None = None,
-        ) -> List[List[GridParamsTensor]]:
+        ) -> List[List[SamplingGridTensor]]:
         # Each group contains the input grid params to each transform in the group (required
         # for some transforms), plus the final grid params (required for resampling groups).
         current_types = None
@@ -194,14 +196,13 @@ class FrozenPipeline(Transform):
         image: Image | List[Image],
         affine: Affine | List[Affine] = None,
         return_grid: bool = False,
-        ) -> Image | List[Image | GridParams]:
+        ) -> Image | List[Image | SamplingGrid]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
         if self._verbose:
             logger.info(f"Transforming {len(images)} images.")
         return_types = ['numpy' if isinstance(i, np.ndarray) else 'torch' for i in images]
         affines = arg_to_list(affine, (np.ndarray, torch.Tensor, None), broadcast=len(images))
-        images = [to_tensor(i) for i in images]
-        devices = [i.device for i in images]
+        images = [to_tensor(i, device=self._device) for i in images]
         dims = [len(i.shape) for i in images]
         if self._dim == 2:
             for i, d in enumerate(dims):
@@ -246,9 +247,9 @@ class FrozenPipeline(Transform):
         # Resampling requires a tensor of sample locations in the moving image and
         # the grid params defining the tensor position in patient coords.
         image_groups = np.unique(image_groups_map).tolist()
-        moving_grids = []       # List[List[GridParamsTensor]]
+        moving_grids = []       # List[List[SamplingGridTensor]]
         resample_points = []    # List[List[PointsTensor]] 
-        final_grids = []        # List[GridParamsTensor]
+        final_grids = []        # List[SamplingGridTensor]
         for i in image_groups:
             image_group_moving_grids = []
             image_group_resample_points = []
@@ -342,9 +343,8 @@ class FrozenPipeline(Transform):
     def transform_points(
         self,
         points: Points,
-        size: Size,
-        affine: Affine, 
         filter_offgrid: bool = True,
+        grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
         **kwargs,
         ) -> Points:
@@ -444,21 +444,20 @@ f"({n_resamples} resamples total for current pipeline). Consider moving intensit
 class Pipeline(RandomTransform):
     def __init__(
         self,
-        transforms: List[Union[Transform]],
-        # What's the thinking re 'dim'?
-        # Same as 'seed'. Allow us to override here, rather than setting in each transform's constructor.
-        # Allows, very easy setting of dim=2 for a pipeline.
-        dim: Optional[int] = None,
-        freeze: Optional[Union[bool, List[bool]]] = False,
-        # What's the thinking around 'seed'?
-        # If set here, override anything set in the transforms constructor. Allows easy setting of seeds in one place.
-        seed: Optional[Union[int, List[int]]] = None,
+        transforms: RandomTransform | Transform | List[RandomTransform | Transform],
+        device: torch.device | Literal['cpu', 'cuda'] | None = None,
+        dim: int | None = None,
+        freeze: bool | List[bool] = False,
+        seed: int | List[int] | None = None,
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
+        transforms = arg_to_list(transforms, (Transform))
         freezes = arg_to_list(freeze, (bool, None), broadcast=len(transforms))
         seeds = arg_to_list(seed, (int, None), broadcast=len(transforms))
         assert len(seeds) == len(transforms), "Random seeds ('seed') must have same length as 'transforms'."
+        if device is not None:
+            [t.set_device(device) for t in transforms]
         if dim is not None:
             assert dim in [2, 3], "Only 2D and 3D pipelines are supported."
             [t.set_dim(dim) for t in transforms]
@@ -497,3 +496,7 @@ class Pipeline(RandomTransform):
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({self.__transforms})"
+
+    @property
+    def transforms(self) -> List[Transform]:
+        return self.__transforms

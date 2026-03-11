@@ -2,7 +2,11 @@ import struct
 from typing import *
 
 from ...typing import *
+from ...utils.args import expand_range_arg
+from ...utils.conversion import to_array, to_tensor, to_tuple
+from ...utils.grid import grid_sample
 from ...utils.logging import logger
+from ...utils.matrix import create_affine
 from ..identity import Identity
 from .spatial import RandomSpatialTransform, SpatialTransform
 
@@ -363,6 +367,7 @@ class Elastic(SpatialTransform):
     def transform_points(
         self,
         points: Points,
+        # Where's the grid and filter_offgrid kwargs?
         interp_method: Optional[Literal['bspline', 'cubic', 'linear', 'linear-gs']] = None,
         **kwargs,
         ) -> Points:

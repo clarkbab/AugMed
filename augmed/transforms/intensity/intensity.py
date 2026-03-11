@@ -2,6 +2,8 @@ from typing import *
 
 from ...typing import *
 from ...utils.args import alias_kwargs, arg_to_list
+from ...utils.conversion import to_array, to_tensor
+from ...utils.matrix import create_affine
 from ..transform import RandomTransform, Transform
 
 # These transforms change pixel/voxel intensities.
@@ -19,12 +21,11 @@ class IntensityTransform(Transform):
         image: Image | List[Image],
         affine: Affine | List[Affine] | None = None,
         return_grid: bool = False,
-        ) -> Image | List[Image | List[GridParams]]:
+        ) -> Image | List[Image | List[SamplingGrid]]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
         return_types = ['numpy' if isinstance(i, np.ndarray) else 'torch' for i in images]
         affines = arg_to_list(affine, (np.ndarray, torch.Tensor, None), broadcast=len(images))
-        images = [to_tensor(i) for i in images]
-        devices = [i.device for i in images]
+        images = [to_tensor(i, device=self._device) for i in images]
         dims = [len(i.shape) for i in images]
         if self._dim == 2:
             for i, d in enumerate(dims):
@@ -62,7 +63,7 @@ class IntensityTransform(Transform):
 
     def transform_intensity(
         self,
-        image: ImageTensor,
+        *args,
         **kwargs,
         ) -> ImageTensor:
         raise ValueError("Subclasses of 'IntensityTransform' must implement 'transform_intensity' method.")
@@ -70,9 +71,6 @@ class IntensityTransform(Transform):
     def transform_points(
         self,
         points: Points,
-        size: Size | None = None,
-        affine: Affine | None = None,
-        filter_offgrid: bool = True,
         return_filtered: bool = False,
         **kwargs,
         ) -> Points:
@@ -80,7 +78,6 @@ class IntensityTransform(Transform):
             return_type = 'numpy'
         else:
             return_type = 'torch'
-
         if return_filtered:
             indices = np.array([]) if return_type == 'numpy' else to_tensor([], device=points.device)
             return points, indices

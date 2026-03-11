@@ -134,7 +134,7 @@ class Crop(GridTransform):
         crop_centre: Point | Literal['image-centre'] = 'image-centre',
         crop_centre_offset: Number | Tuple[Number, ...] = 0.0,
         crop_margin: Number | Tuple[Number | None, ...] | None = None,
-        crop_remove: Number | Tuple[Number | None, ...] | None = None,
+        crop_remove: Number | Tuple[Number | None, ...] | None = 50.0,
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
@@ -174,11 +174,11 @@ class Crop(GridTransform):
 
     def transform_grid(
         self,
-        size: SizeTensor,
-        affine: AffineTensor | None = None,
+        grid: SamplingGridTensor,
         **kwargs,
-        ) -> GridParamsTensor:
+        ) -> SamplingGridTensor:
         print('crop transform grid')
+        size, affine = grid
         if self.__crop_remove is not None:
             # Get the current FOV.
             fov_min, fov_max = fov(size, affine=affine)
@@ -258,9 +258,8 @@ class Crop(GridTransform):
     def transform_points(
         self,
         points: Points,
-        affine: Affine | None = None,
-        size: Size | None = None,
         filter_offgrid: bool = True,
+        grid: SamplingGrid | None = None,   # Required for filtering off-grid points and 'image-centre' crop centre.
         return_filtered: bool = False,
         **kwargs,
         ) -> Points:
@@ -269,6 +268,7 @@ class Crop(GridTransform):
             return_type = 'numpy'
         else:
             return_type = 'torch'
+        size, affine = grid if grid is not None else (None, None)
         size = to_tensor(size, device=points.device, dtype=points.dtype)
         affine = to_tensor(affine, device=points.device, dtype=points.dtype)
 

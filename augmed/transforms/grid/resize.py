@@ -43,10 +43,10 @@ class Resize(GridTransform):
 
     def transform_grid(
         self,
-        size: SizeTensor,
-        affine: AffineTensor | None = None,
+        grid: SamplingGridTensor,
         **kwargs,
-        ) -> GridParamsTensor:
+        ) -> SamplingGridTensor:
+        size, affine = grid
         if self.__size is not None:
             size_t = self.__size.to(size.device)
             if affine is not None:

@@ -2,6 +2,9 @@ from typing import *
 
 from ...typing import *
 from ...utils.args import alias_kwargs, arg_to_list
+from ...utils.conversion import to_array, to_tensor, to_tuple
+from ...utils.grid import grid_points, grid_sample
+from ...utils.matrix import create_affine
 from ..transform import RandomTransform, Transform
 
 # These transforms move objects around in the world.
@@ -14,7 +17,7 @@ class SpatialTransform(Transform):
 
     def backward_transform_points(
         self,
-        points: PointsTensor,
+        *args,
         **kwargs,
         ) -> PointsTensor:
         raise ValueError("Subclasses of 'SpatialTransform' must implement 'backward_transform_points' method.")
@@ -27,11 +30,11 @@ class SpatialTransform(Transform):
         image: Image | List[Image],
         affine: Affine | List[Affine] | None = None,
         return_grid: bool = False,  # Return a grid or list of grids as the final element.
-        ) -> Image | List[Image | List[GridParams]]:
+        ) -> Image | List[Image | List[SamplingGrid]]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
         return_types = ['numpy' if isinstance(i, np.ndarray) else 'torch' for i in images]
         affines = arg_to_list(affine, (np.ndarray, torch.Tensor, None), broadcast=len(images))
-        images = [to_tensor(i) for i in images]
+        images = [to_tensor(i, self._device) for i in images]
         dims = [len(i.shape) for i in images]
         if self._dim == 2:
             for i, d in enumerate(dims):
@@ -111,9 +114,8 @@ class RandomSpatialTransform(RandomTransform, SpatialTransform):
 
     def backward_transform_points(
         self,
-        points: PointsTensor,
-        seed: Optional[int] = None,
+        *args,
         **kwargs,
         ) -> PointsTensor:
-        return self.freeze().backward_transform_points(points, **kwargs)
+        return self.freeze().backward_transform_points(*args, **kwargs)
  

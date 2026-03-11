@@ -82,5 +82,5 @@ Spacing = Spacing2D | Spacing3D
 SpacingTensor = SpacingTensor2D | SpacingTensor3D
 
 # Third-order types (you get it).
-GridParams = Tuple[Size, Affine | None]
-GridParamsTensor = Tuple[SizeTensor, AffineTensor | None]
+SamplingGrid = Tuple[Size, Affine | None]
+SamplingGridTensor = Tuple[SizeTensor, AffineTensor | None]
