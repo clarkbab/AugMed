@@ -14,10 +14,17 @@ class RandomNormalise(RandomIntensityTransform):
     def freeze(self) -> 'Normalise':
         pass
 
+# How do we incorporate different normalisation strategies?
+# - Min/max normalisation.
+# - Z-score normalisation.
+# - Histogram matching normalisation.
+
 class Normalise(IntensityTransform):
     def __init__(
         self,
+        max: Number = 1,
         mean: Number = 0,
+        min: Number = 0,
         std: Number = 1,
         ) -> None:
         pass

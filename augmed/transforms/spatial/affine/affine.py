@@ -118,8 +118,8 @@ class Affine(SpatialTransform):
         if self._rotation is not None:
             # Get centre of rotation.
             if self._rotation_centre == 'image-centre':
-                if size is None or affine is None:
-                    raise ValueError(f"Grid params (size/affine) are required when performing rotation around image centre (centre='image-centre').")
+                if size is None:
+                    raise ValueError(f"Sampling grid (Tuple[Size, Affine | None]) required when performing rotation around image centre (centre='image-centre').")
                 rot_centre = fov_centre(size, affine=affine)
             else:
                 rot_centre = self._rotation_centre.to(device)
@@ -133,8 +133,8 @@ class Affine(SpatialTransform):
         # Get scaling matrices.
         if self._scaling is not None:
             if self._scaling_centre == 'image-centre':
-                if size is None or affine is None:
-                    raise ValueError(f"Grid params (size/affine) are required when performing scaling around image centre (centre='image-centre').")
+                if size is None:
+                    raise ValueError(f"Sampling grid (Tuple[Size, Affine | None]) required when performing scaling around image centre (centre='image-centre').")
                 scale_centre = fov_centre(size, affine=affine)
             else:
                 scale_centre = self._scaling_centre.to(device)
@@ -171,8 +171,8 @@ class Affine(SpatialTransform):
         if self._rotation is not None:
             # Get centre of rotation.
             if self._rotation_centre == 'image-centre':
-                if size is None or affine is None:
-                    raise ValueError(f"'grid' is required when performing rotation around image centre (centre='image-centre').")
+                if size is None:
+                    raise ValueError(f"Sampling grid (Tuple[Size, Affine | None]) required when performing rotation around image centre (centre='image-centre').")
                 rot_centre = fov_centre(size, affine=affine)
             else:
                 rot_centre = self._rotation_centre.to(device)
@@ -186,8 +186,8 @@ class Affine(SpatialTransform):
         # Get scaling matrices.
         if self._scaling is not None:
             if self._scaling_centre == 'image-centre':
-                if size is None or affine is None:
-                    raise ValueError(f"'grid' is required when performing scaling around image centre (centre='image-centre').")
+                if size is None:
+                    raise ValueError(f"Sampling grid (Tuple[Size, Affine | None]) required when performing scaling around image centre (centre='image-centre').")
                 scale_centre = fov_centre(size, affine=affine)
             else:
                 scale_centre = self._scaling_centre.to(device)

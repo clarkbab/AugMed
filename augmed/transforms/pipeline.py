@@ -55,19 +55,13 @@ class FrozenPipeline(Transform):
         # so that the points matrix is only used once (for each chain).
         affine_chain = []
         for i, (t, g) in enumerate(reversed(list(zip(transforms, grids)))):
-            size, affine = g
-            grid_kwargs = dict(
-                size=size,
-                affine=affine,
-            )
-
             # Chain resolution conditions:
             # 1. Non-affine transform.
             # 2. Final transform.
             if isinstance(t, SpatialTransform):
                 # Store any affine multiplications for later.
                 if isinstance(t, Affine):
-                    t_affine = t.get_affine_backward_transform(points_t.device, **grid_kwargs)
+                    t_affine = t.get_affine_backward_transform(points_t.device, grid=g)
                     # Transform 't' iterates backwards through transform list.
                     # We want transforms that are later in the list to be applied first (i.e. to be
                     # later in the affine chain). So prepend transforms to the list.
@@ -79,7 +73,7 @@ class FrozenPipeline(Transform):
                         affine_chain = []
 
                     # Perform current transform.
-                    points_t = t.backward_transform_points(points_t, **grid_kwargs)
+                    points_t = t.backward_transform_points(points_t, grid=g)
 
             # Resolve if final round.
             if i == len(transforms) - 1 and len(affine_chain) > 0:
