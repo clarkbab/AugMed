@@ -107,7 +107,7 @@ A `Points` object is a `torch.Tensor/np.ndarray` of size `(N, X, Y, Z)` where Z 
 A `SamplingGrid` of type `Tuple[Size, Affine | None]` defines the image sampling grid (a.k.a field-of-view, view window). If the `Affine` is none, then transforms will be applied using image (pixel/voxel) coords and may be incorrect for images with anisotropic spacing.
 
 ### Transform
-`Transform` is the base type for all transforms, including `Pipeline`. All subclasses must implement `transform_image` and `transform_points` methods.
+`Transform` is the base type for all transforms, including `Pipeline`. All subclasses must implement `transform_images` and `transform_points` methods.
 
 ### RandomTransform
 A `RandomTransform` is a special type of transform that behaves non-deterministically, but can yield a deterministic transform through the `freeze()` method. `RandomTransforms` are only applied a proportion `p` of the time, and will `freeze()` to the `IdentityTransform` when not applied.

@@ -46,9 +46,11 @@ def to_tensor(
     broadcast: int | None = None,
     device: torch.device | None = None,
     dtype: torch.dtype | None = None,
-    ) -> torch.Tensor | None:
-    if data is None:
-        return None
+    return_type: bool = False,
+    ) -> torch.Tensor | Tuple[torch.Tensor | None, type] | None:
+    # Record input type.
+    if return_type:
+        input_type = type(data)
 
     # Convert to tensor.
     if isinstance(data, (bool, float, int, str)):
@@ -66,7 +68,10 @@ def to_tensor(
     if broadcast is not None and len(data) == 1:
         data = data.repeat(broadcast)
 
-    return data
+    if return_type:
+        return data, input_type
+    else:
+        return data
 
 @delegates_to(to_array)
 def to_tuple(

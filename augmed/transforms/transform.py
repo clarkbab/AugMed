@@ -68,6 +68,10 @@ class Transform:
     # more boilerplate for new transforms.
     @alias_kwargs([
         ('a', 'affine'),
+        ('fo', 'filter_offgrid'),
+        ('rg', 'return_grid'),
+        ('rp', 'return_params'),
+        ('s', 'size'),
     ])
     # Can pass a single array/tensor or a list of arrays/tensors.
     # Points arrays/tensors are inferred by their Nx2/3 shape. It's unlikely that images of this size will
@@ -75,22 +79,19 @@ class Transform:
     # Labels are inferred by the data type of the passed array/tensor (bool) and will be returned
     # in boolean type.
     # Will return a single transformed array/tensor or list of arrays/tensors.
-    # If a single affine/size is passed, this is broadcast to all image arrays/tensors,
-    # other
+    # All images/points must have a single size/affine - but size is inferred when images are passed. Points
+    # require SamplingGrid for filtering off-grid points after transforming.
     def transform(
         self,
         *data: Image | Points | List[Image | Points],
-        affine: Affine | List[Affine] | None = None,
-        size: Size | List[Size] | np.ndarray | torch.Tensor | None = None,
+        affine: Affine | None = None,
         filter_offgrid: bool = True,
         return_grid: bool = False,
         return_params: bool = False,
-        ) -> Image | Points | List[Image | Points | List[SamplingGrid] | TransformParams]:
+        size: Size | None = None,
+        ) -> Image | Points | List[Image | Points | SamplingGrid | TransformParams]:
         datas, data_was_single = arg_to_list(data, (np.ndarray, torch.Tensor), return_expanded=True)
-        affines = arg_to_list(affine, (np.ndarray, torch.Tensor, None), broadcast=len(datas))
-        sizes = arg_to_list(size, (tuple, np.ndarray, torch.Tensor, None), broadcast=len(datas), iter_types=(np.ndarray, torch.Tensor))
-        assert len(affines) == len(datas), "Number of affines must match number of data arrays/tensors."
-        assert len(sizes) == len(datas), "Number of sizes must match number of data arrays/tensors."
+
 
         # Infer data types.
         image_indices = []
@@ -106,21 +107,17 @@ class Transform:
 
         # Infer sizes for offscreen point filtering.
         if filter_offgrid:
-            for i in points_indices:
-                if sizes[i] is None:
-                    # Infer size from images - must all have same shape.
-                    image_sizes = [datas[j].shape[-self._dim:] for j in image_indices]
-                    if len(image_sizes) > 0 and np.unique(image_sizes, axis=0).shape[0] == 1:
-                        sizes[i] = tuple(image_sizes[0])
+            if size is None:
+                if len(image_indices) == 0:
+                    raise ValueError("Size must be provided when filtering off-grid points without images.")
+                size = datas[image_indices[0]].shape[-self._dim:]
 
         # Transform images.
-        # Wait, if this is a random transform, then 'transform_image'
-        # and 'transform_points' will apply different transforms.
+        # This is always a deterministic transform, so 'transform_images' and 'transform_points' will make the
+        # same transformation.
         images = [datas[i] for i in image_indices]
-        image_data_was_single = len(images) == 1
-        image_affines = [affines[i] for i in image_indices]
         if len(images) > 0:
-            res_ts = self.transform_image(images, affine=image_affines, return_grid=return_grid)
+            res_ts = self.transform_images(images, affine=affine, return_grid=return_grid)
             if return_grid:
                 *image_ts, grid_ts = res_ts
             else:
@@ -130,13 +127,9 @@ class Transform:
 
         # Transform points.
         points = [datas[i] for i in points_indices]
-        points_sizes = [sizes[i] for i in points_indices]
-        points_affines = [affines[i] for i in points_indices]
         points_ts = []
-        for p, a, sz in zip(points, points_affines, points_sizes):
-            if sz is None:
-                filter_offgrid = False    # Only filter if 'size' was passed or inferred from image sizes.
-            points_t = self.transform_points(p, filter_offgrid=filter_offgrid, size=sz, affine=a)
+        for p in points:
+            points_t = self.transform_points(p, filter_offgrid=filter_offgrid, size=size, affine=affine)
             points_ts.append(points_t)
 
         # Flatten image and points results.
@@ -166,12 +159,12 @@ class Transform:
 
         return results
 
-    def transform_image(
+    def transform_images(
         self,
         *args,
         **kwargs,
         ) -> Image | List[Image | List[SamplingGrid]]:
-        raise ValueError("Subclasses of 'Transform' must implement 'transform_image' method.")
+        raise ValueError("Subclasses of 'Transform' must implement 'transform_images' method.")
 
     def transform_points(
         self,
@@ -231,14 +224,14 @@ class RandomTransform(Transform):
         
         return results
 
-    def transform_image(
+    def transform_images(
         self,
         *args,
         return_params: bool = False,
         **kwargs,
         ) -> Image | List[Image | List[SamplingGrid] | TransformParams]:
         t_frozen = self.freeze()
-        results = t_frozen.transform_image(*args, **kwargs)
+        results = t_frozen.transform_images(*args, **kwargs)
 
         # Convert to return format.
         if return_params:

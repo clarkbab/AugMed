@@ -9,20 +9,21 @@ class Identity(Transform):
     def __str__(self) -> str:
         return super().__str__(self.__class__.__name__, {})
 
-    def transform_image(
+    def transform_images(
         self,
         image: Image | List[Image],
-        affine: Affine | List[Affine] | None = None,
+        affine: Affine | None = None,
         return_grid: bool = False,
         ) -> Image | List[Image | List[SamplingGrid]]:
-        images, images_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
-        sizes = [i.shape[-self._dim:] for i in images]
-        affines = arg_to_list(affine, (np.ndarray, torch.Tensor, None), broadcast=len(images))
+        images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
+        size = images[0].shape[-self._dim:]
+        for i, img in enumerate(images[1:], 1):
+            assert img.shape[-self._dim:] == size, f"All images must have the same spatial size. Expected {size}, got {img.shape[-self._dim:]} for image {i}."
 
         image_ts = images
-        results = image_ts[0] if images_was_single else image_ts
+        results = image_ts[0] if image_was_single else image_ts
         if return_grid:
-            grid_ts = list(zip(sizes, affines))
+            grid_ts = [(size, affine)]
             if isinstance(results, list):
                 results.append(grid_ts)
             else:

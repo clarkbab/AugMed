@@ -1,4 +1,3 @@
-import struct
 from typing import *
 
 from ...typing import *
@@ -115,13 +114,13 @@ class Elastic(SpatialTransform):
         control_spacing: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 50.0,
         control_origin: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
         displacement: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
-        interp_method: Literal['bspline', 'cubic', 'linear'] = 'linear',
+        method: Literal['bspline', 'cubic', 'linear'] = 'bspline',
         seed: int = 42,
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
-        assert interp_method in ['bspline', 'cubic', 'linear', 'linear-gs'], "Only 'bspline', 'cubic', 'linear', and 'linear-gs' elastic methods are supported."
-        self.__interp_method = interp_method
+        assert method in ['bspline', 'cubic', 'linear'], "Only 'bspline', 'cubic', and 'linear' elastic methods are supported."
+        self.__method = method
         self.__control_spacing = to_tensor(control_spacing, broadcast=self._dim)
         assert len(self.__control_spacing) == self._dim, f"Expected 'control_spacing' of length '{self._dim}' for dim={self._dim}, got {len(self.__control_spacing)}."
         self.__control_origin = to_tensor(control_origin, broadcast=self._dim)
@@ -137,125 +136,72 @@ class Elastic(SpatialTransform):
             control_spacing=self.__control_spacing,
             dim=self._dim,
             displacement=self.__disp_range,
-            method=self.__interp_method,
+            method=self.__method,
             seed=self.__seed,
         )
 
     def backward_transform_points(
         self,
         points: PointsTensor,
-        interp_method: Optional[Literal['bspline', 'cubic', 'linear', 'linear-gs']] = None,
-        **kwargs,
         ) -> PointsTensor:
-        method = self.__interp_method if interp_method is None else interp_method
-        if method == 'bspline':
-            return self.__backward_transform_points_bspline(points, **kwargs)
-        elif method == 'cubic':
-            return self.__backward_transform_points_cubic(points, **kwargs)
-        elif method == 'linear':
-            return self.__backward_transform_points_linear(points, **kwargs)
-        elif method == 'linear-gs':
-            return self.__backward_transform_points_linear_gs(points, **kwargs)
+        _, cp_disps, cp_spacing, cp_origin = self.control_grid(points)
+        cp_disps = torch.moveaxis(cp_disps, 0, -1)  # Move channels dim to back.
+
+        # Normalise points to the control grid integer coords.
+        points_norm = (points - cp_origin) / cp_spacing
+
+        # Floor index: leftmost stencil point for linear, second stencil point for cubic.
+        floor_idx = torch.stack([torch.searchsorted(torch.arange(cp_disps.shape[a]).to(points.device), points_norm[:, a]) - 1 for a in range(self._dim)], dim=-1)
+
+        # Fractional position within the cell [0, 1).
+        t = points_norm - floor_idx
+
+        # Compute basis weights and stencil offsets per method.
+        if self.__method == 'linear':
+            # Linear basis (C0, interpolating). 2 weights, offsets {0, 1}.
+            b = torch.stack([1 - t, t], dim=-2)
+            stencil_range = torch.tensor([0, 1])
         else:
-            raise ValueError(f"Unrecognised elastic method '{method}'.")
+            # Cubic methods. 4 weights, offsets {-1, 0, 1, 2}.
+            t2 = t * t
+            t3 = t2 * t
+            if self.__method == 'cubic':
+                # Catmull-Rom basis (C1, interpolating).
+                w0 = -0.5 * t3 + t2 - 0.5 * t
+                w1 =  1.5 * t3 - 2.5 * t2 + 1.0
+                w2 = -1.5 * t3 + 2.0 * t2 + 0.5 * t
+                w3 =  0.5 * t3 - 0.5 * t2
+            else:
+                # Cubic B-spline basis (C2, approximating).
+                u = 1.0 - t
+                w0 = u * u * u / 6.0
+                w1 = (3.0 * t3 - 6.0 * t2 + 4.0) / 6.0
+                w2 = (-3.0 * t3 + 3.0 * t2 + 3.0 * t + 1.0) / 6.0
+                w3 = t3 / 6.0
+            b = torch.stack([w0, w1, w2, w3], dim=-2)
+            stencil_range = torch.tensor([-1, 0, 1, 2])
 
-    def __backward_transform_points_cubic(
-        self,
-        points: PointsTensor,
-        **kwargs,
-        ) -> PointsTensor:
-        # Get control grid.
-        # Make this just large enough to interpolate all 'points'.
-        _, cp_disps, cp_spacing, cp_origin = self.control_grid(points, method='cubic')
-        cp_disps = torch.moveaxis(cp_disps, 0, -1)  # Move channels dim to back.
+        n = len(stencil_range)
 
-        # Normalise points to the control grid integer coords.
-        points_norm = (points - cp_origin) / cp_spacing
-
-        # Get lowest corner point.
-        corner_min = torch.stack([torch.searchsorted(torch.arange(cp_disps.shape[a]).to(points.device), points_norm[:, a]) - 1 for a in range(self._dim)], dim=-1)
-
-        # Get distances from corner.
-        u = points_norm - corner_min
-        b = torch.stack([1 - u, u], dim=-2)
-
-        # Get corner point offsets.
-        offsets = torch.stack(torch.meshgrid([torch.tensor([0, 1]) for _ in range(self._dim)], indexing='ij'), dim=-1)
+        # Build the n^dim stencil offsets.
+        offsets = torch.stack(torch.meshgrid([stencil_range] * self._dim, indexing='ij'), dim=-1)
         offsets = offsets.reshape(-1, self._dim).to(points.device)
 
-        # Calculate corners for each point.
-        corners = corner_min[:, None, :] + offsets[None, :, :]
+        # Gather stencil indices for each point.
+        corners = floor_idx[:, None, :] + offsets[None, :, :]
 
-        # Split into x/y/z indices to perform control point disp selection.
+        # Index into the displacement grid.
         idxs = corners.unbind(-1)
         corner_disps = cp_disps[*idxs]
 
-        # Create V of corner point displacements.
-        V = corner_disps.reshape(-1, *(2, ) * self._dim, self._dim)
+        # Reshape to (N, n, n, [n,] dim) for einsum.
+        V = corner_disps.reshape(-1, *(n, ) * self._dim, self._dim)
 
-        # Compute interpolated displacements.
+        # Tensor-product interpolation via einsum.
         if self._dim == 2:
             disps = torch.einsum('ni,nj,nijd->nd', b[:, :, 0], b[:, :, 1], V)
         elif self._dim == 3:
             disps = torch.einsum('ni,nj,nk,nijkd->nd', b[:, :, 0], b[:, :, 1], b[:, :, 2], V)
-
-        # Get displaced input points.
-        points_t = points + disps
-
-        return points_t
-
-    def __backward_transform_points_linear(
-        self,
-        points: PointsTensor,
-        **kwargs,
-        ) -> PointsTensor:
-        print('linear elastic')
-        print(points.dtype)
-
-        # Get control grid.
-        # Make this just large enough to interpolate all 'points'.
-        _, cp_disps, cp_spacing, cp_origin = self.control_grid(points, method='linear')
-        cp_disps = torch.moveaxis(cp_disps, 0, -1)  # Move channels dim to back.
-        print(cp_disps.dtype, cp_spacing.dtype, cp_origin.dtype)
-
-        # Normalise points to the control grid integer coords.
-        points_norm = (points - cp_origin) / cp_spacing
-        print(points_norm.dtype)
-
-        # Get lowest corner point.
-        corner_min = torch.stack([torch.searchsorted(torch.arange(cp_disps.shape[a]).to(points.device), points_norm[:, a]) - 1 for a in range(self._dim)], dim=-1)
-        print(corner_min.dtype)
-
-        # Get distances from corner.
-        u = points_norm - corner_min
-        b = torch.stack([1 - u, u], dim=-2)
-        print(u.dtype, b.dtype)
-
-        # Get corner point offsets.
-        offsets = torch.stack(torch.meshgrid([torch.tensor([0, 1]) for _ in range(self._dim)], indexing='ij'), dim=-1)
-        offsets = offsets.reshape(-1, self._dim).to(points.device)
-        print(offsets.dtype)
-
-        # Calculate corners for each point.
-        corners = corner_min[:, None, :] + offsets[None, :, :]
-        print(corners.dtype)
-
-        # Split into x/y/z indices to perform control point disp selection.
-        idxs = corners.unbind(-1)
-        corner_disps = cp_disps[*idxs]
-
-        # Create V of corner point displacements.
-        V = corner_disps.reshape(-1, *(2, ) * self._dim, self._dim)
-
-        # Compute interpolated displacements.
-        print('elastic types')
-        print(b.dtype)
-        print(V.dtype)
-        if self._dim == 2:
-            disps = torch.einsum('ni,nj,nijd->nd', b[:, :, 0], b[:, :, 1], V)
-        elif self._dim == 3:
-            disps = torch.einsum('ni,nj,nk,nijkd->nd', b[:, :, 0], b[:, :, 1], b[:, :, 2], V)
-        print(disps.dtype)
 
         # Get displaced input points.
         points_t = points + disps
@@ -265,10 +211,9 @@ class Elastic(SpatialTransform):
     def __backward_transform_points_linear_gs(
         self,
         points: PointsTensor,
-        **kwargs,
         ) -> PointsTensor:
         # Get control grid.
-        _, cp_disps, cp_spacing, cp_origin = self.control_grid(points, method='linear')
+        _, cp_disps, cp_spacing, cp_origin = self.control_grid(points)
 
         # Interpolate the displacement grid.
         disps = grid_sample(cp_disps, cp_spacing, cp_origin, points, dim=self._dim)
@@ -279,22 +224,29 @@ class Elastic(SpatialTransform):
 
         return points_t
         
-    # For the same location in a control grid (set spacing, origin) we should always get the
-    # same displacement for the same 'seed'. This is so that subsequent calls to the
-    # transform methods will return the same results.
-    def __control_point_seed(
+    # Vectorised spatial hash over integer grid indices.
+    # Hashes integer indices (not float world coordinates) to avoid floating-point sensitivity.
+    # Returns draws in [0, 1) of shape (N, dim).
+    def __control_grid_draws(
         self,
-        point: PointsTensor,
-        ) -> int:
+        indices: PointsTensor,
+        ) -> PointsTensor:
         primes = (73856093, 19349663, 83492791)[:self._dim]
-        def f2i(f: float) -> int:   
-            return struct.unpack('<I', struct.pack('<f', float(f)))[0]
-        point = [f2i(f) for f in point]
-        h = point[0] * primes[0]
-        for p, pr in zip(point[1:], primes[1:]):
-            h = h ^ (p * pr)
+        h = indices[..., 0].long() * primes[0]
+        for a in range(1, self._dim):
+            h = h ^ (indices[..., a].long() * primes[a])
         h = h ^ self.__seed
-        return h & 0x7fffffff
+
+        # Generate dim independent draws by mixing h with a per-dimension offset.
+        draws = []
+        for d in range(self._dim):
+            hd = h ^ (d * 2654435761)
+            # Finalisation mix for better distribution.
+            hd = hd ^ (hd >> 16)
+            hd = (hd * 0x45d9f3b) & 0xFFFFFFFF
+            hd = hd ^ (hd >> 16)
+            draws.append((hd & 0x7FFFFFFF).float() / 0x7FFFFFFF)
+        return torch.stack(draws, dim=-1)
 
     # The control grid random displacements must not change depending on the passed points.
     # That is, if we pass the point (0.5, 0.5, 0.5) this must give the same transformed
@@ -304,15 +256,12 @@ class Elastic(SpatialTransform):
     def control_grid(
         self,
         points: PointsTensor,
-        interp_method: Literal['bspline', 'cubic', 'linear'] | None = None,
         ) -> Tuple[ImageTensor, ChannelImageTensor, AffineTensor]:
         if isinstance(points, torch.Tensor):
             return_type = 'torch'
         else:
             points = to_tensor(points)
             return_type = 'numpy'
-
-        print('control grid')
 
         # Get the origin/spacing for this point cloud.
         cp_spacing = self.__control_spacing.to(points.device)
@@ -321,29 +270,26 @@ class Elastic(SpatialTransform):
         point_max, _ = points.max(dim=0)
         cp_idx_min = torch.floor((point_min - cp_global_origin) / cp_spacing)
         cp_idx_max = torch.ceil((point_max - cp_global_origin) / cp_spacing)
-        method = self.__method if interp_method is None else interp_method
-        if method == 'cubic':
-            # Add extra boundary points for cubic splines.
+        if self.__method in ('cubic', 'bspline'):
+            # Add extra boundary points for the 4-point stencil.
             cp_idx_min -= 1
             cp_idx_max += 1
         cp_origin = cp_idx_min * cp_spacing + cp_global_origin
 
-        # Create grid of control points.
-        cps = torch.stack(torch.meshgrid([
+        # Create integer index grid — indices uniquely identify control points
+        # and are used for the spatial hash (avoids floating-point sensitivity).
+        cp_indices = torch.stack(torch.meshgrid([
             torch.arange(cp_idx_min[a].item(), cp_idx_max[a].item() + 1) for a in range(self._dim)
         ], indexing='ij'), dim=-1)
-        cps = to_tensor(cps, device=points.device)
-        cps = cps * cp_spacing + cp_global_origin
+        cp_indices = cp_indices.to(device=points.device)
 
-        # Generate reproducible displacements.
-        cp_points = cps.reshape(-1, self._dim)
-        draws = []
-        for p in cp_points:
-            seed = self.__control_point_seed(p)
-            rng = np.random.default_rng(seed=seed)
-            draw = to_tensor(rng.random(self._dim), device=points.device).type(torch.float32)
-            draws.append(draw)
-        draws = torch.stack(draws).reshape(*cps.shape[:-1], self._dim)
+        # Convert indices to world coordinates.
+        cps = cp_indices * cp_spacing + cp_global_origin
+
+        # Generate reproducible displacements via vectorised spatial hash.
+        cp_size = cp_indices.shape[:-1]
+        draws = self.__control_grid_draws(cp_indices.reshape(-1, self._dim))
+        draws = draws.reshape(*cp_size, self._dim)
         disp_range = self.__disp_range.to(points.device)
         cp_disps = draws * (disp_range[:, 1] - disp_range[:, 0]) + disp_range[:, 0]
 
@@ -367,55 +313,35 @@ class Elastic(SpatialTransform):
     def transform_points(
         self,
         points: Points,
-        # Where's the grid and filter_offgrid kwargs?
-        interp_method: Optional[Literal['bspline', 'cubic', 'linear', 'linear-gs']] = None,
-        **kwargs,
         ) -> Points:
-        if isinstance(points, np.ndarray):
-            points = to_tensor(points)
-            return_type = 'numpy'
-        else:
-            return_type = 'torch'
+        points, return_type = to_tensor(points, return_type=True)
 
-        # Get the back transform.
-        method = self.__interp_method if interp_method is None else interp_method
-        if method == 'bspline':
-            backward_transform_fn = self.__backward_transform_points_bspline
-        elif method == 'cubic':
-            backward_transform_fn = self.__backward_transform_points_cubic
-        elif method == 'linear':
-            backward_transform_fn = self.__backward_transform_points_linear
-        elif method == 'linear-gs':
-            backward_transform_fn = self.__backward_transform_points_linear_gs
-        else:
-            raise ValueError(f"Unrecognised elastic method '{method}'.")
+        # Define the backward transform.
 
-        # Let: T_back(x) = x + u(x), where x is the point to find (fixed image) and T_back is known.
-        # Let: F(x) = T_back(x) - y, where y is the target point we know (moving image).
-        # Solve for F(x) = 0 using an iterative method, e.g. Newton-Raphson.
-        max_i = 100     # Log the required number of iterations for solve and adjust.
+        # Let: y = x + b(x) be the location of the back-transformed point x.  
+        # Let: F(x) = x + b(x) - y, and solve for F(x) = 0 (using Newton-Rahpson) to find x for a given y.
+        n_iter = 100     # Log the required number of iterations for solve and adjust.
         x_i = points.clone().requires_grad_()
-        for i in range(max_i):
+        b_x = self.backward_transform_points
+        for i in range(n_iter):
             # Perform transform.
-            t_x = backward_transform_fn(x_i)
+            y_i = x_i + self.backward_transform_points(x_i)
 
             # Check convergence.
-            print(t_x.dtype, points.dtype)
-            if torch.isclose(t_x, points).all():
-                print('Newton-Raphson for inverse transform converged after iterations: ', i)
+            if torch.isclose(y_i, points).all():
                 break
-            elif i == max_i - 1:
-                raise ValueError('No convergence after iterations: ', i)
+            elif i == n_iter - 1:
+                raise ValueError('No convergence after max iterations: ', i)
 
             # Get Jacobians for batch of points.
             grads = []
             for a in range(self._dim):
-                grad_a, = torch.autograd.grad(t_x[:, a], x_i, grad_outputs=torch.ones(len(x_i)).to(x_i.device), retain_graph=True)
+                grad_a, = torch.autograd.grad(y_i[:, a], x_i, grad_outputs=torch.ones(len(x_i)).to(x_i.device), retain_graph=True)
                 grads.append(grad_a)
             J = torch.stack(grads, dim=1)
 
             # Batch solve for deltas for each point.
-            r = t_x - points
+            r = y_i - points
             dx = torch.linalg.solve(J, r)
 
             # Update guess.
@@ -423,7 +349,7 @@ class Elastic(SpatialTransform):
             x_i = x_i - dx
 
         x_i = x_i.detach()
-        if return_type == 'numpy':
+        if return_type is np.ndarray:
             x_i = to_array(x_i)
 
         return x_i

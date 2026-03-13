@@ -185,17 +185,16 @@ class FrozenPipeline(Transform):
     @alias_kwargs([
         ('a', 'affine'),
     ])
-    def transform_image(
+    def transform_images(
         self,
         image: Image | List[Image],
-        affine: Affine | List[Affine] = None,
+        affine: Affine | None = None,
         return_grid: bool = False,
         ) -> Image | List[Image | SamplingGrid]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
         if self._verbose:
             logger.info(f"Transforming {len(images)} images.")
         return_types = ['numpy' if isinstance(i, np.ndarray) else 'torch' for i in images]
-        affines = arg_to_list(affine, (np.ndarray, torch.Tensor, None), broadcast=len(images))
         images = [to_tensor(i, device=self._device) for i in images]
         dims = [len(i.shape) for i in images]
         if self._dim == 2:
@@ -204,35 +203,10 @@ class FrozenPipeline(Transform):
         elif self._dim == 3:
             for i, d in enumerate(dims):
                 assert d in [3, 4, 5], f"Expected 3-5D image (3D spatial, optional batch/channel), got {d}D for image {i}."
-        sizes = [to_tensor(i.shape[-self._dim:], device=i.device, dtype=torch.int32) for i in images]
-        affines = [to_tensor(a, device=i.device, dtype=torch.float32) if a is not None else create_affine(spacing=(1,) * self._dim, origin=(0,) * self._dim, device=i.device, return_type='torch') for a, i in zip(affines, images)]
-
-        # How do we handle image and transform grouping.
-        # - Transform grouping allows us to chain intensity and grid/spatial transforms.
-        # - Image grouping is an optimisation that allows us to calculate resampling positions
-        #   for images with the same grid params only once.
-        # - Now that multiple resampling steps may be applied, we need to store multiple resampling
-        #   position points tensors for each image group. 
-        # - For resampling, we require the tensor of back-transformed points (final grid params generate
-        #   these points, then 'backward_transform_points' places them in moving image space) and the grid
-        #   params (affine, size) for the resampled image (first image in group).
-
-        # Group images by grid parameters: affine, spacing
-        # We need to know which groups there are -> i.e. the first image in each grid group.
-        # We need to know the mapping from image to group.
-        image_groups_map = []       # Maps images (by position in 'image_groups') to groups.
-        for i, (a, s) in enumerate(zip(affines, sizes)):
-            # Check if this image has same grid params as an existing group.
-            image_groups = np.unique(image_groups_map).tolist()
-            for j in image_groups:
-                g_a, g_s = affines[j], sizes[j]
-                if torch.all(a == g_a) and torch.all(s == g_s):
-                    image_groups_map.append(j)
-                    break
-
-            # Otherwise, add to a new group.
-            if len(image_groups_map) != i + 1:
-                image_groups_map.append(i)
+        size = to_tensor(images[0].shape[-self._dim:], device=images[0].device, dtype=torch.int32)
+        for i, img in enumerate(images[1:], 1):
+            assert img.shape[-self._dim:] == images[0].shape[-self._dim:], f"All images must have the same spatial size. Expected {tuple(images[0].shape[-self._dim:])}, got {tuple(img.shape[-self._dim:])} for image {i}."
+        affine_t = to_tensor(affine, device=self._device, dtype=torch.float32) if affine is not None else create_affine(spacing=(1,) * self._dim, origin=(0,) * self._dim, device=self._device, return_type='torch')
 
         # Load transforms - grouped by intensity or grid/spatial types.
         transform_groups = self.__get_transform_groups()
@@ -240,50 +214,38 @@ class FrozenPipeline(Transform):
         # Save the data required for each resampling step.
         # Resampling requires a tensor of sample locations in the moving image and
         # the grid params defining the tensor position in patient coords.
-        image_groups = np.unique(image_groups_map).tolist()
-        moving_grids = []       # List[List[SamplingGridTensor]]
-        resample_points = []    # List[List[PointsTensor]] 
-        final_grids = []        # List[SamplingGridTensor]
-        for i in image_groups:
-            image_group_moving_grids = []
-            image_group_resample_points = []
+        moving_grids = []       # List[SamplingGridTensor]
+        resample_points_list = []    # List[PointsTensor] 
 
-            # Get grid params for each transform group.
-            size, affine = sizes[i], affines[i]
-            grid_groups = self.__get_transform_groups_grid_params(size, affine=affine)
+        # Get grid params for each transform group.
+        grid_groups = self.__get_transform_groups_grid_params(size, affine=affine_t)
 
-            # Calculate info needed for resampling steps: moving grid params, resampling points
-            # plus final grids for returning to user. 
-            for ts, gs in zip(transform_groups, grid_groups):
-                if isinstance(ts[0], IntensityTransform):
-                    # Ensuring group arrays have same length as number of transforms.
-                    image_group_moving_grids.append(None)
-                    image_group_resample_points.append(None)
-                elif isinstance(ts[0], (GridTransform, SpatialTransform)):
-                    # Get final grid points.
-                    points_t = grid_points(*gs[-1]).to(size.device)
+        # Calculate info needed for resampling steps: moving grid params, resampling points
+        # plus final grid for returning to user. 
+        for ts, gs in zip(transform_groups, grid_groups):
+            if isinstance(ts[0], IntensityTransform):
+                # Ensuring arrays have same length as number of transforms.
+                moving_grids.append(None)
+                resample_points_list.append(None)
+            elif isinstance(ts[0], (GridTransform, SpatialTransform)):
+                # Get final grid points.
+                points_t = grid_points(*gs[-1]).to(size.device)
 
-                    # Back transform to their moving image locations.
-                    # - Each transform requires the input grid params.
-                    points_t = self.__backward_transform_points_for_group(ts, points_t, gs[:-1])
+                # Back transform to their moving image locations.
+                # - Each transform requires the input grid params.
+                points_t = self.__backward_transform_points_for_group(ts, points_t, gs[:-1])
 
-                    # Reshape points to the fixed image size.
-                    points_t = points_t.reshape(*to_tuple(gs[-1][0]), self._dim)
+                # Reshape points to the fixed image size.
+                points_t = points_t.reshape(*to_tuple(gs[-1][0]), self._dim)
 
-                    # Append to group resampling info.
-                    image_group_moving_grids.append(gs[0])
-                    image_group_resample_points.append(points_t)
+                # Append to resampling info.
+                moving_grids.append(gs[0])
+                resample_points_list.append(points_t)
 
-            # Append group results.
-            moving_grids.append(image_group_moving_grids)
-            resample_points.append(image_group_resample_points)
-            final_grids.append(gs[-1])
+        final_grid = gs[-1]
 
-        assert len(moving_grids) == len(image_groups)
-        assert len(resample_points) == len(image_groups)
-        assert len(final_grids) == len(image_groups)
-        assert len(moving_grids[0]) == len(transform_groups), f"Got {len(moving_grids[0])}, expected {len(transform_groups)}"
-        assert len(resample_points[0]) == len(transform_groups), f" Got {len(resample_points[0])}, expected {len(transform_groups)}"
+        assert len(moving_grids) == len(transform_groups), f"Got {len(moving_grids)}, expected {len(transform_groups)}"
+        assert len(resample_points_list) == len(transform_groups), f"Got {len(resample_points_list)}, expected {len(transform_groups)}"
 
         # Transform images.
         image_ts = []
@@ -299,19 +261,19 @@ class FrozenPipeline(Transform):
                 elif isinstance(ts[0], (GridTransform, SpatialTransform)):
                     # Perform a single resample for all grid/spatial transforms in the 
                     # transform group.
-                    moving_grid = moving_grids[image_groups_map[i]][j]
+                    moving_grid = moving_grids[j]
                     moving_grid = (g.to(image.device) for g in moving_grid)
                     moving_size, moving_affine = moving_grid
                     # This warning is more for development.
                     if to_tuple(image_t.shape[-self._dim:]) != to_tuple(moving_size):
                         raise ValueError(f"Transform group {j} expected image to have spatial shape {to_tuple(moving_size)}, got {to_tuple(image_t.shape[-self._dim:])}.")
-                    points = resample_points[image_groups_map[i]][j].to(image.device)
+                    points = resample_points_list[j].to(image.device)
 
                     # Perform resample.
                     image_t = grid_sample(image_t, moving_affine, points)
 
             # Get the final grid.
-            grid_t = final_grids[image_groups_map[i]]
+            grid_t = final_grid
 
             # Convert to return types.
             if rt == 'numpy': 
@@ -432,7 +394,7 @@ class FrozenPipeline(Transform):
             logger.warning(f"Separating grid/spatial transforms with intensity transforms will trigger additional resampling steps " \
 f"({n_resamples} resamples total for current pipeline). Consider moving intensity transform/s to first/last position.")
 
-# A Pipeline is by default a 'RandomTransform'. Therefore it inherits 'transform_image/points' from
+# A Pipeline is by default a 'RandomTransform'. Therefore it inherits 'transform_images/points' from
 # 'RandomTransform', which freezes the pipeline before applying the transform.
 # When 'Pipeline.freeze' returned a 'Pipeline', this introduced recursive calls to 'freeze'.
 class Pipeline(RandomTransform):
