@@ -1,6 +1,9 @@
-from .spatial import SpatialTransform
+import numpy as np
+import torch
+from typing import List
 
 from ...typing import *
+from .spatial import SpatialTransform
 
 # This is really just a utility class for breaking affine chains in the pipeline
 # for testing purposes. It doesn't actually move objects.
@@ -30,5 +33,5 @@ class BreakAffineChain(SpatialTransform):
         self,
         points: Points,
         **kwargs,
-        ) -> Points:
+        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
         return points

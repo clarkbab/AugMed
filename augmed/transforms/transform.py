@@ -69,7 +69,7 @@ class Transform:
     @alias_kwargs([
         ('a', 'affine'),
         ('fo', 'filter_offgrid'),
-        ('rg', 'return_grid'),
+        ('ra', 'return_affine'),
         ('rp', 'return_params'),
         ('s', 'size'),
     ])
@@ -86,10 +86,10 @@ class Transform:
         *data: Image | Points | List[Image | Points],
         affine: Affine | None = None,
         filter_offgrid: bool = True,
-        return_grid: bool = False,
+        return_affine: bool = False,
         return_params: bool = False,
         size: Size | None = None,
-        ) -> Image | Points | List[Image | Points | SamplingGrid | TransformParams]:
+        ) -> Image | Points | List[Image | Points | Affine | TransformParams]:
         datas, data_was_single = arg_to_list(data, (np.ndarray, torch.Tensor), return_expanded=True)
 
 
@@ -117,9 +117,9 @@ class Transform:
         # same transformation.
         images = [datas[i] for i in image_indices]
         if len(images) > 0:
-            res_ts = self.transform_images(images, affine=affine, return_grid=return_grid)
-            if return_grid:
-                *image_ts, grid_ts = res_ts
+            res_ts = self.transform_images(images, affine=affine, return_affine=return_affine)
+            if return_affine:
+                *image_ts, affine_t = res_ts
             else:
                 image_ts = res_ts
         else:
@@ -145,11 +145,11 @@ class Transform:
 
         # Convert to return format.
         results = data_ts[0] if data_was_single else data_ts
-        if return_grid:
+        if return_affine:
             if isinstance(results, list):
-                results.append(grid_ts)
+                results.append(affine_t)
             else:
-                results = [results, grid_ts]
+                results = [results, affine_t]
         if return_params:
             params_result = self._params
             if isinstance(results, list):
@@ -170,7 +170,7 @@ class Transform:
         self,
         *args,
         **kwargs,
-        ) -> Points:
+        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
         raise ValueError("Subclasses of 'Transform' must implement 'transform_points' method.")
 
 # RandomTransforms should have all the behaviour of a normal transform.
@@ -247,7 +247,7 @@ class RandomTransform(Transform):
         *args,
         return_params: bool = False,
         **kwargs,
-        ) -> Points | List[Points | TransformParams]:
+        ) -> Points | List[Points | np.ndarray | torch.Tensor | TransformParams]:
         t_frozen = self.freeze()
         results = t_frozen.transform_points(*args, **kwargs)
 

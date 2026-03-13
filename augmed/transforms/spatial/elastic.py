@@ -2,112 +2,15 @@ from typing import *
 
 from ...typing import *
 from ...utils.args import expand_range_arg
-from ...utils.conversion import to_array, to_tensor, to_tuple
+from ...utils.conversion import to_numpy, to_tensor, to_tuple
 from ...utils.grid import grid_sample
 from ...utils.logging import logger
-from ...utils.matrix import create_affine
+from ...utils.matrix import affine_origin, affine_spacing, create_affine
 from ..identity import Identity
 from .spatial import RandomSpatialTransform, SpatialTransform
 
-# control spacing:
-# - c=5 -> c=(5, 5, 5, 5) for 2D, c=(5, 5, 5, 5, 5, 5) for 3D. I.e deterministic control spacing.
-# - c=(3, 5) -> c=(3, 5, 3, 5) for 2D, c=(3, 5, 3, 5, 3, 5) for 3D.
-# disp:
-# - d=5 -> d=(-5, 5, -5, 5) for 2D, d=(-5, 5, -5, 5, -5, 5) for 3D.
-# - d=(3, 5) -> d=(3, 5, 3, 5) for 2D, d=(3, 5, 3, 5, 3, 5) for 3D.
-# control origin:
-# - c=5 -> c=(-5, 5, -5, 5) for 2D, c=(-5, 5, -5, 5, -5, 5) for 3D.
-# - c=(3, 5) -> c=(3, 5, 3, 5) for 2D, c=(3, 5, 3, 5, 3, 5) for 3D.
-class RandomElastic(RandomSpatialTransform):
-    def __init__(
-        self, 
-        # How do we deal with elastic deformations that may fold?
-        #   - prevent by requiring 'disp' to be < half of the control spacing.
-        #   - allow but warn that folding may occur and forward point transforms may not converge.
-        #      will also need to raise error upon no convergence.
-        # 1. Control spacing/origin defines the grid of control points.
-        # 2. Displacement controls the deformation vector magnitudes.
-        control_spacing: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 50.0,
-        control_origin: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
-        displacement: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
-        # Would other curve-fitting methods have desirable properties for certain situations?
-        # E.g. 'bezier' allows sharp discontinuities which could be good for shearing in lung.
-        # Can we randomise the curve-fitting method to increase the space of data augmentation?
-        # This is the method for interpolating between points on the coarse control grid.
-        interp_method: Literal['bspline', 'cubic', 'linear', 'linear-gs'] = 'linear',
-        **kwargs,
-        ) -> None:
-        super().__init__(**kwargs)
-        self.__interp_method = interp_method
-        control_spacing_range = expand_range_arg(control_spacing, dim=self._dim)
-        assert len(control_spacing_range) == 2 * self._dim, f"Expected 'control_spacing' of length {2 * self._dim}, got {len(control_spacing_range)}."
-        self.__control_spacing_range = to_tensor(control_spacing_range).reshape(self._dim, 2)
-        control_origin_range = expand_range_arg(control_origin, dim=self._dim, negate_lower=True)
-        assert len(control_origin_range) == 2 * self._dim, f"Expected 'control_origin' of length {2 * self._dim}, got {len(control_origin_range)}."
-        self.__control_origin_range = to_tensor(control_origin_range).reshape(self._dim, 2)
-        disp_range = expand_range_arg(displacement, dim=self._dim, negate_lower=True)
-        assert len(disp_range) == 2 * self._dim, f"Expected 'displacement' of length {2 * self._dim}, got {len(disp_range)}."
-        self.__disp_range = to_tensor(disp_range).reshape(self._dim, 2)
-        self._params = dict(
-            type=self.__class__.__name__,
-            control_origin=self.__control_origin_range,
-            control_spacing=self.__control_spacing_range,
-            dim=self._dim,
-            displacement=self.__disp_range,
-            interp_method=self.__interp_method,
-            p=self._p,
-        )
-
-        # Warn about displacement ranges.
-        disp_widths = self.__disp_range[:, 1] - self.__disp_range[:, 0]
-        min_control_spacing, _ = self.__control_spacing_range.min(axis=1)
-        if (disp_widths >= min_control_spacing).any():
-            logger.warning(f"RandomElastic transforms with larger displacement widths (widths={to_tuple(disp_widths)}) larger than \
-(or equal to) control spacings (min. spacings={to_tuple(min_control_spacing)}) may produce folding transforms. Such transforms may \
-be non-invertible and could raise errors when performing forward points transform.")
-
-    def freeze(self) -> 'Elastic':
-        should_apply = self._rng.random(1) < self._p
-        if not should_apply:
-            return Identity(dim=self._dim)
-        draw = to_tensor(self._rng.random(self._dim))
-        control_spacing_draw = draw * (self.__control_spacing_range[:, 1] - self.__control_spacing_range[:, 0]) + self.__control_spacing_range[:, 0]
-        control_origin_draw = draw * (self.__control_origin_range[:, 1] - self.__control_origin_range[:, 0]) + self.__control_origin_range[:, 0]
-        # We can't draw displacements here as we need the image to determine the number of control points.
-        # However, we should pass a randomly-drawn seed.
-        seed_draw = self._rng.integers(1e9)   # Requires upper bound.
-        params = dict(
-            control_origin=control_origin_draw,
-            control_spacing=control_spacing_draw,
-            displacement=self.__disp_range.flatten(),
-            method=self.__method,
-            seed=seed_draw,
-        )
-        return super().freeze(Elastic, params)
-
-    def __str__(self) -> str:
-        params = dict(
-            control_origin=to_tuple(self.__control_origin_range.flatten(), decimals=3),
-            control_spacing=to_tuple(self.__control_spacing_range.flatten(), decimals=3),
-            displacement=to_tuple(self.__disp_range.flatten(), decimals=3),
-        )
-        return super().__str__(self.__class__.__name__, params)
-
 # Defines a coarse grid of control points.
 # Random displacements are assigned at each control point.
-# A b-spline is fitted (input: control point locations, output: perturbed control point positions)
-# and this b-spline is used as the back transform.
-# Cubic b-splines require a min of 4 control points per axis.
-# Define max displacement, with some reasonable default.
-# An option to set border displacements to zero. Maybe?
-
-# control spacing:
-# - c=5 -> c=(5, 5) for 2D, c=(5, 5, 5) for 3D.
-# disp:
-# - d=5 -> d=(-5, 5, -5, 5) for 2D, d=(-5, 5, -5, 5, -5, 5) for 3D.
-# - d=(3, 5) -> d=(3, 5, 3, 5) for 2D, d=(3, 5, 3, 5, 3, 5) for 3D.
-# control origin:
-# - c=5 -> c=(5, 5) for 2D, c=(5, 5, 5) for 3D.
 class Elastic(SpatialTransform):
     def __init__(
         self,
@@ -130,6 +33,7 @@ class Elastic(SpatialTransform):
         assert len(disp_range) == 2 * self._dim, f"Expected 'displacement' of length {2 * self._dim}, got {len(disp_range)}."
         self.__disp_range = to_tensor(disp_range).reshape(self._dim, 2)
         self.__seed = seed
+        self.__warn_folding()
         self._params = dict(
             type=self.__class__.__name__,
             control_origin=self.__control_origin,
@@ -140,11 +44,23 @@ class Elastic(SpatialTransform):
             seed=self.__seed,
         )
 
+    def __warn_folding(self, control_spacing: torch.Tensor | None = None) -> None:
+        if control_spacing is None:
+            control_spacing = self.__control_spacing
+        disp_widths = self.__disp_range[:, 1] - self.__disp_range[:, 0]
+        if (disp_widths >= control_spacing).any():
+            logger.warning(f"Elastic transforms with displacement widths ({to_tuple(disp_widths)}) >= "
+                f"control spacings ({to_tuple(control_spacing)}) may produce folding transforms. Such transforms may "
+                f"be non-invertible and could raise errors when performing forward points transform.")
+
     def backward_transform_points(
         self,
         points: PointsTensor,
+        **kwargs,
         ) -> PointsTensor:
-        _, cp_disps, cp_spacing, cp_origin = self.control_grid(points)
+        cp_disps, cp_affine = self.control_grid(points)
+        cp_spacing = affine_spacing(cp_affine)
+        cp_origin = affine_origin(cp_affine)
         cp_disps = torch.moveaxis(cp_disps, 0, -1)  # Move channels dim to back.
 
         # Normalise points to the control grid integer coords.
@@ -213,10 +129,10 @@ class Elastic(SpatialTransform):
         points: PointsTensor,
         ) -> PointsTensor:
         # Get control grid.
-        _, cp_disps, cp_spacing, cp_origin = self.control_grid(points)
+        cp_disps, cp_affine = self.control_grid(points)
 
         # Interpolate the displacement grid.
-        disps = grid_sample(cp_disps, cp_spacing, cp_origin, points, dim=self._dim)
+        disps = grid_sample(cp_disps, cp_affine, points, dim=self._dim)
         disps = torch.moveaxis(disps, 0, -1)[0, 0]    # Disps come back from 'grid_sample' as 3-channel image.
 
         # Get displaced input points.
@@ -224,17 +140,19 @@ class Elastic(SpatialTransform):
 
         return points_t
         
-    # Vectorised spatial hash over integer grid indices.
-    # Hashes integer indices (not float world coordinates) to avoid floating-point sensitivity.
+    # Vectorised spatial hash over world-space control point coordinates.
+    # Reinterprets float32 coords as int32 bit patterns for hashing — deterministic
+    # as long as the same arithmetic path produces the coordinates.
     # Returns draws in [0, 1) of shape (N, dim).
     def __control_grid_draws(
         self,
-        indices: PointsTensor,
+        points: PointsTensor,
         ) -> PointsTensor:
+        bits = points.float().contiguous().view(torch.int32)
         primes = (73856093, 19349663, 83492791)[:self._dim]
-        h = indices[..., 0].long() * primes[0]
+        h = bits[..., 0].long() * primes[0]
         for a in range(1, self._dim):
-            h = h ^ (indices[..., a].long() * primes[a])
+            h = h ^ (bits[..., a].long() * primes[a])
         h = h ^ self.__seed
 
         # Generate dim independent draws by mixing h with a per-dimension offset.
@@ -248,6 +166,7 @@ class Elastic(SpatialTransform):
             draws.append((hd & 0x7FFFFFFF).float() / 0x7FFFFFFF)
         return torch.stack(draws, dim=-1)
 
+    # This method returns the control point locations, displacements
     # The control grid random displacements must not change depending on the passed points.
     # That is, if we pass the point (0.5, 0.5, 0.5) this must give the same transformed
     # point regardless of the other points we pass.
@@ -256,13 +175,7 @@ class Elastic(SpatialTransform):
     def control_grid(
         self,
         points: PointsTensor,
-        ) -> Tuple[ImageTensor, ChannelImageTensor, AffineTensor]:
-        if isinstance(points, torch.Tensor):
-            return_type = 'torch'
-        else:
-            points = to_tensor(points)
-            return_type = 'numpy'
-
+        ) -> Tuple[ChannelImageTensor, AffineTensor]:
         # Get the origin/spacing for this point cloud.
         cp_spacing = self.__control_spacing.to(points.device)
         cp_global_origin = self.__control_origin.to(points.device)
@@ -271,7 +184,7 @@ class Elastic(SpatialTransform):
         cp_idx_min = torch.floor((point_min - cp_global_origin) / cp_spacing)
         cp_idx_max = torch.ceil((point_max - cp_global_origin) / cp_spacing)
         if self.__method in ('cubic', 'bspline'):
-            # Add extra boundary points for the 4-point stencil.
+            # Add an extra boundary point on each end of each axis.
             cp_idx_min -= 1
             cp_idx_max += 1
         cp_origin = cp_idx_min * cp_spacing + cp_global_origin
@@ -288,19 +201,16 @@ class Elastic(SpatialTransform):
 
         # Generate reproducible displacements via vectorised spatial hash.
         cp_size = cp_indices.shape[:-1]
-        draws = self.__control_grid_draws(cp_indices.reshape(-1, self._dim))
+        draws = self.__control_grid_draws(cps.reshape(-1, self._dim))
         draws = draws.reshape(*cp_size, self._dim)
         disp_range = self.__disp_range.to(points.device)
         cp_disps = draws * (disp_range[:, 1] - disp_range[:, 0]) + disp_range[:, 0]
 
-        # Bring channels dimension to fore as these are images - i.e. not just an Nx2/3 list of points.
-        cps, cp_disps = torch.moveaxis(cps, -1, 0), torch.moveaxis(cp_disps, -1, 0)
-
+        # Bring channels to the front.
+        cp_disps = torch.moveaxis(cp_disps, -1, 0)
         cp_affine = create_affine(cp_spacing, cp_origin)
-        if return_type == 'numpy':
-            cps, cp_disps, cp_affine = to_array(cps), to_array(cp_disps), to_array(cp_affine)
         
-        return cps, cp_disps, cp_affine
+        return cp_disps, cp_affine
 
     def __str__(self) -> str:
         params = dict(
@@ -313,7 +223,11 @@ class Elastic(SpatialTransform):
     def transform_points(
         self,
         points: Points,
-        ) -> Points:
+        filter_offgrid: bool = True,
+        grid: SamplingGrid | None = None,   # Required for 'image-centre' rotation/scale.
+        return_filtered: bool = False,
+        **kwargs,
+        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
         points, return_type = to_tensor(points, return_type=True)
 
         # Define the backward transform.
@@ -322,10 +236,10 @@ class Elastic(SpatialTransform):
         # Let: F(x) = x + b(x) - y, and solve for F(x) = 0 (using Newton-Rahpson) to find x for a given y.
         n_iter = 100     # Log the required number of iterations for solve and adjust.
         x_i = points.clone().requires_grad_()
-        b_x = self.backward_transform_points
+        b = self.backward_transform_points
         for i in range(n_iter):
             # Perform transform.
-            y_i = x_i + self.backward_transform_points(x_i)
+            y_i = x_i + b(x_i)
 
             # Check convergence.
             if torch.isclose(y_i, points).all():
@@ -349,7 +263,99 @@ class Elastic(SpatialTransform):
             x_i = x_i - dx
 
         x_i = x_i.detach()
-        if return_type is np.ndarray:
-            x_i = to_array(x_i)
 
-        return x_i
+        # Forward transformed points could end up off-screen and should be filtered.
+        # However, we need to know which points are returned for loss calc for example.
+        points_t = x_i
+        if filter_offgrid:
+            size, affine = grid if grid is not None else (None, None)
+            assert size is not None
+            assert affine is not None
+            size = to_tensor(size, device=points.device, dtype=points.dtype)
+            affine = to_tensor(affine, device=points.device, dtype=points.dtype)
+            fov = torch.stack([affine[:3, 3], affine[:3, 3] + size * affine[:3, :3].diag()]).to(points.device)
+            to_keep = (points_t >= fov[0]) & (points_t < fov[1])
+            to_keep = to_keep.all(axis=1)
+            points_t = points_t[to_keep]
+            indices = torch.where(to_keep)[0]
+
+        # Convert return types.
+        if return_type is np.ndarray:
+            points_t = to_numpy(points_t)
+            indices = to_numpy(indices) if filter_offgrid else None
+
+        # Format returned values.
+        results = points_t
+        if filter_offgrid and return_filtered:
+            results = [points_t, indices]
+        return results
+
+class RandomElastic(RandomSpatialTransform):
+    def __init__(
+        self, 
+        control_spacing: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 50.0,
+        control_origin: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
+        displacement: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
+        # Can we randomise the fitting method too?
+        method: Literal['bspline', 'cubic', 'linear'] = 'linear',
+        **kwargs,
+        ) -> None:
+        super().__init__(**kwargs)
+        self.__method = method
+        control_spacing_range = expand_range_arg(control_spacing, dim=self._dim)
+        assert len(control_spacing_range) == 2 * self._dim, f"Expected 'control_spacing' of length {2 * self._dim}, got {len(control_spacing_range)}."
+        self.__control_spacing_range = to_tensor(control_spacing_range).reshape(self._dim, 2)
+        control_origin_range = expand_range_arg(control_origin, dim=self._dim, negate_lower=True)
+        assert len(control_origin_range) == 2 * self._dim, f"Expected 'control_origin' of length {2 * self._dim}, got {len(control_origin_range)}."
+        self.__control_origin_range = to_tensor(control_origin_range).reshape(self._dim, 2)
+        disp_range = expand_range_arg(displacement, dim=self._dim, negate_lower=True)
+        assert len(disp_range) == 2 * self._dim, f"Expected 'displacement' of length {2 * self._dim}, got {len(disp_range)}."
+        self.__disp_range = to_tensor(disp_range).reshape(self._dim, 2)
+        self._params = dict(
+            type=self.__class__.__name__,
+            control_origin=self.__control_origin_range,
+            control_spacing=self.__control_spacing_range,
+            dim=self._dim,
+            displacement=self.__disp_range,
+            method=self.__method,
+            p=self._p,
+        )
+
+        self.__warn_folding()
+
+    def __warn_folding(self, control_spacing: torch.Tensor | None = None) -> None:
+        if control_spacing is None:
+            control_spacing, _ = self.__control_spacing_range.min(axis=1)
+        disp_widths = self.__disp_range[:, 1] - self.__disp_range[:, 0]
+        if (disp_widths >= control_spacing).any():
+            logger.warning(f"RandomElastic transforms with displacement widths ({to_tuple(disp_widths)}) >= "
+                f"control spacings ({to_tuple(control_spacing)}) may produce folding transforms. Such transforms may "
+                f"be non-invertible and could raise errors when performing forward points transform.")
+
+    def freeze(self) -> 'Elastic':
+        should_apply = self._rng.random(1) < self._p
+        if not should_apply:
+            return Identity(dim=self._dim)
+        draw = to_tensor(self._rng.random(self._dim))
+        control_spacing_draw = draw * (self.__control_spacing_range[:, 1] - self.__control_spacing_range[:, 0]) + self.__control_spacing_range[:, 0]
+        control_origin_draw = draw * (self.__control_origin_range[:, 1] - self.__control_origin_range[:, 0]) + self.__control_origin_range[:, 0]
+        # We can't draw displacements here as we need the image to determine the number of control points.
+        # However, we should pass a randomly-drawn seed.
+        seed_draw = self._rng.integers(1e9)   # Requires upper bound.
+        self.__warn_folding(control_spacing_draw)
+        params = dict(
+            control_origin=control_origin_draw,
+            control_spacing=control_spacing_draw,
+            displacement=self.__disp_range.flatten(),
+            method=self.__method,
+            seed=seed_draw,
+        )
+        return super().freeze(Elastic, params)
+
+    def __str__(self) -> str:
+        params = dict(
+            control_origin=to_tuple(self.__control_origin_range.flatten(), decimals=3),
+            control_spacing=to_tuple(self.__control_spacing_range.flatten(), decimals=3),
+            displacement=to_tuple(self.__disp_range.flatten(), decimals=3),
+        )
+        return super().__str__(self.__class__.__name__, params)

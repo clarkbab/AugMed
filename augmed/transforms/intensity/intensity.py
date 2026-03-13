@@ -2,7 +2,7 @@ from typing import *
 
 from ...typing import *
 from ...utils.args import alias_kwargs, arg_to_list
-from ...utils.conversion import to_array, to_tensor
+from ...utils.conversion import to_numpy, to_tensor
 from ...utils.matrix import create_affine
 from ..transform import RandomTransform, Transform
 
@@ -20,8 +20,8 @@ class IntensityTransform(Transform):
         self,
         image: Image | List[Image],
         affine: Affine | None = None,
-        return_grid: bool = False,
-        ) -> Image | List[Image | List[SamplingGrid]]:
+        return_affine: bool = False,
+        ) -> Image | List[Image | Affine]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
         return_types = ['numpy' if isinstance(i, np.ndarray) else 'torch' for i in images]
         images = [to_tensor(i, device=self._device) for i in images]
@@ -39,26 +39,21 @@ class IntensityTransform(Transform):
 
         # Transform images.
         image_ts = []
-        grid_ts = []
         for image, rt in zip(images, return_types):
             image_t = self.transform_intensity(image)
 
             # Convert to return types.
-            grid_t = (size, affine_t)     # Grid isn't modified by IntensityTransforms.
             if rt == 'numpy': 
-                image_t = to_array(image_t)
-                if return_grid:
-                    grid_t = tuple(to_array(g) for g in grid_t)
+                image_t = to_numpy(image_t)
             image_ts.append(image_t)
-            if return_grid:
-                grid_ts.append(grid_t)
 
         results = image_ts[0] if image_was_single else image_ts
-        if return_grid:
+        if return_affine:
+            affine_out = to_numpy(affine_t) if return_types[0] == 'numpy' else affine_t
             if isinstance(results, list):
-                results.append(grid_ts)
+                results.append(affine_out)
             else:
-                results = [results, grid_ts]
+                results = [results, affine_out]
 
         return results
 
@@ -74,7 +69,7 @@ class IntensityTransform(Transform):
         points: Points,
         return_filtered: bool = False,
         **kwargs,
-        ) -> Points:
+        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
         if isinstance(points, np.ndarray):
             return_type = 'numpy'
         else:

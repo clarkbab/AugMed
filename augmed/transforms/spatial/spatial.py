@@ -2,7 +2,7 @@ from typing import *
 
 from ...typing import *
 from ...utils.args import alias_kwargs, arg_to_list
-from ...utils.conversion import to_array, to_tensor, to_tuple
+from ...utils.conversion import to_numpy, to_tensor, to_tuple
 from ...utils.grid import grid_points, grid_sample
 from ...utils.matrix import create_affine
 from ..transform import RandomTransform, Transform
@@ -29,8 +29,8 @@ class SpatialTransform(Transform):
         self,
         image: Image | List[Image],
         affine: Affine | None = None,
-        return_grid: bool = False,  # Return a grid or list of grids as the final element.
-        ) -> Image | List[Image | List[SamplingGrid]]:
+        return_affine: bool = False,
+        ) -> Image | List[Image | Affine]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
         return_types = ['numpy' if isinstance(i, np.ndarray) else 'torch' for i in images]
         images = [to_tensor(i, self._device) for i in images]
@@ -62,27 +62,26 @@ class SpatialTransform(Transform):
 
         # Resample images.
         image_ts = []
-        grid_ts = []
         for i, rt in zip(images, return_types):
             # Perform resample.
             image_t = grid_sample(i, affine_t, points_t.to(i.device))
 
             # Convert to return types.
-            grid_t = (size, affine_t)     # Grids are not modified by SpatialTransforms.
             if rt == 'numpy': 
-                image_t = to_array(image_t)
-                if return_grid:
-                    grid_t = tuple(to_array(g) for g in grid_t)
+                image_t = to_numpy(image_t)
+                if return_affine:
+                    affine_out = to_numpy(affine_t)
+            else:
+                if return_affine:
+                    affine_out = affine_t
             image_ts.append(image_t)
-            if return_grid:
-                grid_ts.append(grid_t)
 
         results = image_ts[0] if image_was_single else image_ts
-        if return_grid:
+        if return_affine:
             if isinstance(results, list):
-                results.append(grid_ts)
+                results.append(affine_out)
             else:
-                results = [results, grid_ts]
+                results = [results, affine_out]
 
         return results
 

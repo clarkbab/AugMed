@@ -3,7 +3,7 @@ from typing import *
 from ..typing import *
 from .python import delegates_to
 
-def to_array(
+def to_numpy(
     data: bool | Number | str | List[bool | Number | str] | np.ndarray | torch.Tensor | torch.Size,
     broadcast: int | None = None,
     device: torch.device | None = None,
@@ -20,7 +20,7 @@ def to_array(
     elif isinstance(data, torch.Size):
         data = np.array(data)
     elif isinstance(data, torch.Tensor):
-        data = data.cpu().numpy()
+        data = data.detach().cpu().numpy()
 
     # Set data type.
     if dtype is not None:
@@ -32,14 +32,14 @@ def to_array(
 
     return data
 
-@delegates_to(to_array)
+@delegates_to(to_numpy)
 def to_list(
     data: bool | Number | str | List[bool | Number | str] | np.ndarray | torch.Tensor | torch.Size,
     **kwargs,
     ) -> List[bool | Number | str] | None:
     if data is None:
         return None 
-    return to_array(data, **kwargs).tolist()
+    return to_numpy(data, **kwargs).tolist()
 
 def to_tensor(
     data: bool | Number | str | List[bool | Number | str | List[...]] | np.ndarray | torch.Tensor | torch.Size,
@@ -73,7 +73,7 @@ def to_tensor(
     else:
         return data
 
-@delegates_to(to_array)
+@delegates_to(to_numpy)
 def to_tuple(
     data: bool | Number | str | List[bool | Number | str] | np.ndarray | torch.Tensor | torch.Size,
     decimals: int | None = None,
@@ -82,7 +82,7 @@ def to_tuple(
     if data is None:
         return None 
     # Convert to tuple.
-    data = tuple(to_array(data, **kwargs).tolist())
+    data = tuple(to_numpy(data, **kwargs).tolist())
 
     # Round elements if required.
     if decimals is not None:

@@ -181,7 +181,7 @@ class Crop(GridTransform):
         size, affine = grid
         if self.__crop_remove is not None:
             # Get the current FOV.
-            fov_min, fov_max = fov(size, affine=affine)
+            fov_min, fov_max = fov(grid)
 
             # Get the amounts to remove.
             crop_remove_min = self.__crop_remove[:, 0].to(size.device)
@@ -262,7 +262,7 @@ class Crop(GridTransform):
         grid: SamplingGrid | None = None,   # Required for filtering off-grid points and 'image-centre' crop centre.
         return_filtered: bool = False,
         **kwargs,
-        ) -> Points:
+        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
         if isinstance(points, np.ndarray):
             points = to_tensor(points)
             return_type = 'numpy'

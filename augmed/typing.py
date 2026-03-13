@@ -1,7 +1,7 @@
 from jaxtyping import Bool, Float, Int
 import numpy as np
 import torch 
-from typing import Dict, Literal, Tuple
+from typing import Dict, Literal, NamedTuple, Optional, Tuple
 
 # First-order types (composed of basic types).
 # Splitting by 'order' allows for easier managing of type dependencies.
@@ -82,5 +82,10 @@ Spacing = Spacing2D | Spacing3D
 SpacingTensor = SpacingTensor2D | SpacingTensor3D
 
 # Third-order types (you get it).
-SamplingGrid = Tuple[Size, Affine | None]
-SamplingGridTensor = Tuple[SizeTensor, AffineTensor | None]
+class SamplingGrid(NamedTuple):
+    size: Size
+    affine: Optional[Affine] = None
+
+class SamplingGridTensor(NamedTuple):
+    size: SizeTensor
+    affine: Optional[AffineTensor] = None
