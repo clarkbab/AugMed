@@ -65,7 +65,7 @@ class Pad(GridTransform):
         size, affine = grid
         if self.__pad_add is not None:
             # Get the current FOV.
-            fov_min, fov_max = fov(size, affine=affine)
+            fov_min, fov_max = fov(grid)
 
             # Get the amounts to add.
             pad_add_min = self.__pad_add[:, 0].to(size.device)
@@ -139,7 +139,7 @@ class Pad(GridTransform):
         grid: SamplingGrid | None = None,   # Required for 'image-centre' pad centre.
         return_filtered: bool = False,
         **kwargs,
-        ) -> Points:
+        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
         if isinstance(points, np.ndarray):
             points = to_tensor(points)
             return_type = 'numpy'

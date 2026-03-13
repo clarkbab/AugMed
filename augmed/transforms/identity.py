@@ -13,8 +13,8 @@ class Identity(Transform):
         self,
         image: Image | List[Image],
         affine: Affine | None = None,
-        return_grid: bool = False,
-        ) -> Image | List[Image | List[SamplingGrid]]:
+        return_affine: bool = False,
+        ) -> Image | List[Image | Affine]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
         size = images[0].shape[-self._dim:]
         for i, img in enumerate(images[1:], 1):
@@ -22,12 +22,11 @@ class Identity(Transform):
 
         image_ts = images
         results = image_ts[0] if image_was_single else image_ts
-        if return_grid:
-            grid_ts = [(size, affine)]
+        if return_affine:
             if isinstance(results, list):
-                results.append(grid_ts)
+                results.append(affine)
             else:
-                results = [results, grid_ts]
+                results = [results, affine]
 
         return results
 
@@ -36,7 +35,7 @@ class Identity(Transform):
         points: Points,
         return_filtered: bool = False,
         **kwargs,
-        ) -> Points:
+        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
         if return_filtered:
             # Create filtered indices to match API.
             indices = to_tensor([], device=points.device, dtype=torch.int32) if isinstance(points, torch.Tensor) else np.array([])

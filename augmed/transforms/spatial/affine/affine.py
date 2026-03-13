@@ -246,12 +246,8 @@ class Affine(SpatialTransform):
         grid: SamplingGrid | None = None,   # Required for 'image-centre' rotation/scale.
         return_filtered: bool = False,
         **kwargs,
-        ) -> Points | Tuple[Points, np.ndarray | torch.Tensor]:
-        if isinstance(points, np.ndarray):
-            points = to_tensor(points)
-            return_type = 'numpy'
-        else:
-            return_type = 'torch'
+        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
+        points, return_type = to_tensor(points, return_type=True)
         size, affine = grid if grid is not None else (None, None)
         size = to_tensor(size, device=points.device, dtype=points.dtype)
         affine = to_tensor(affine, device=points.device, dtype=points.dtype)
@@ -274,16 +270,18 @@ class Affine(SpatialTransform):
             to_keep = to_keep.all(axis=1)
             points_t = points_t[to_keep]
             indices = torch.where(to_keep)[0]
-            if return_type == 'numpy':
-                points_t, indices = points_t.numpy(), indices.numpy()
-            if return_filtered:
-                return points_t, indices
-            else:
-                return points_t
-        else:
-            if return_type == 'numpy':
-                points_t = points_t.numpy()
-            return points_t
+
+        # Convert return types.
+        if return_type is np.ndarray:
+            points_t = points_t.cpu().numpy()
+            indices = indices.cpu().numpy() if filter_offgrid else None
+
+        # Format returned values.
+        results = points_t
+        if filter_offgrid and return_filtered:
+            results = [points_t, indices]
+        return results
+
 
 class RandomAffine(RandomSpatialTransform):
     @alias_kwargs([

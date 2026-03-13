@@ -4,7 +4,7 @@ from typing import *
 
 from ..typing import *
 from ..utils.args import alias_kwargs, arg_to_list
-from ..utils.conversion import to_array, to_tensor, to_tuple
+from ..utils.conversion import to_numpy, to_tensor, to_tuple
 from ..utils.geometry import fov
 from ..utils.grid import grid_points, grid_sample
 from ..utils.logging import logger
@@ -125,15 +125,14 @@ class FrozenPipeline(Transform):
     # Returns input/output grid params for all transform groups.
     def __get_transform_groups_grid_params(
         self,
-        size: SizeTensor,
-        affine: AffineTensor | None = None,
+        grid: SamplingGridTensor | None = None,
         ) -> List[List[SamplingGridTensor]]:
         # Each group contains the input grid params to each transform in the group (required
         # for some transforms), plus the final grid params (required for resampling groups).
         current_types = None
         grid_groups = []
         grid_group = []
-        size_t, affine_t = size, affine
+        grid_t = grid
 
         for i, t in enumerate(self.__transforms):
             if isinstance(t, Identity):
@@ -141,11 +140,11 @@ class FrozenPipeline(Transform):
 
             # Add transform to group.
             if current_types is not None and isinstance(t, tuple(current_types)):
-                grid_group.append((size_t, affine_t))
+                grid_group.append(grid_t)
             else:
                 # Close out existing grid group - unless first iteration.
                 if current_types is not None:
-                    grid_group.append((size_t, affine_t))    # Add final grid params to group.
+                    grid_group.append(grid_t)    # Add final grid params to group.
                     grid_groups.append(grid_group)
                 
                 # Append transform to new group of new type.
@@ -153,15 +152,15 @@ class FrozenPipeline(Transform):
                     current_types = [IntensityTransform]
                 else:
                     current_types = [GridTransform, SpatialTransform]
-                grid_group = [(size_t, affine_t)]
-
+                grid_group = [grid_t]
+    
             # Update grid params.
             if isinstance(t, GridTransform):
-                size_t, affine_t = t.transform_grid(size_t, affine=affine_t)
+                grid_t = t.transform_grid(grid_t)
 
         # Add final group - final transform could have been identity.
         if len(grid_group) > 0:
-            grid_group.append((size_t, affine_t))    # Add final grid params to group.
+            grid_group.append(grid_t)    # Add final grid params to group.
             grid_groups.append(grid_group)
 
         return grid_groups
@@ -189,8 +188,8 @@ class FrozenPipeline(Transform):
         self,
         image: Image | List[Image],
         affine: Affine | None = None,
-        return_grid: bool = False,
-        ) -> Image | List[Image | SamplingGrid]:
+        return_affine: bool = False,
+        ) -> Image | List[Image | Affine]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
         if self._verbose:
             logger.info(f"Transforming {len(images)} images.")
@@ -206,7 +205,7 @@ class FrozenPipeline(Transform):
         size = to_tensor(images[0].shape[-self._dim:], device=images[0].device, dtype=torch.int32)
         for i, img in enumerate(images[1:], 1):
             assert img.shape[-self._dim:] == images[0].shape[-self._dim:], f"All images must have the same spatial size. Expected {tuple(images[0].shape[-self._dim:])}, got {tuple(img.shape[-self._dim:])} for image {i}."
-        affine_t = to_tensor(affine, device=self._device, dtype=torch.float32) if affine is not None else create_affine(spacing=(1,) * self._dim, origin=(0,) * self._dim, device=self._device, return_type='torch')
+        affine = to_tensor(affine, device=self._device, dtype=torch.float32) if affine is not None else create_affine(spacing=(1,) * self._dim, origin=(0,) * self._dim, device=self._device, return_type='torch')
 
         # Load transforms - grouped by intensity or grid/spatial types.
         transform_groups = self.__get_transform_groups()
@@ -218,7 +217,7 @@ class FrozenPipeline(Transform):
         resample_points_list = []    # List[PointsTensor] 
 
         # Get grid params for each transform group.
-        grid_groups = self.__get_transform_groups_grid_params(size, affine=affine_t)
+        grid_groups = self.__get_transform_groups_grid_params(grid=(size, affine))
 
         # Calculate info needed for resampling steps: moving grid params, resampling points
         # plus final grid for returning to user. 
@@ -249,7 +248,6 @@ class FrozenPipeline(Transform):
 
         # Transform images.
         image_ts = []
-        grid_ts = []
         for i, (image, rt) in enumerate(zip(images, return_types)):
             image_t = image
 
@@ -272,24 +270,22 @@ class FrozenPipeline(Transform):
                     # Perform resample.
                     image_t = grid_sample(image_t, moving_affine, points)
 
-            # Get the final grid.
-            grid_t = final_grid
+            # Get the final affine.
+            _, affine_out = final_grid
 
             # Convert to return types.
             if rt == 'numpy': 
-                image_t = to_array(image_t)
-                if return_grid:
-                    grid_t = tuple(to_array(g) for g in grid_t)
+                image_t = to_numpy(image_t)
+                if return_affine:
+                    affine_out = to_numpy(affine_out)
             image_ts.append(image_t)
-            if return_grid:
-                grid_ts.append(grid_t)
 
         results = image_ts[0] if image_was_single else image_ts
-        if return_grid:
+        if return_affine:
             if isinstance(results, list):
-                results.append(grid_ts)
+                results.append(affine_out)
             else:
-                results = [results, grid_ts]
+                results = [results, affine_out]
 
         return results
 
@@ -303,44 +299,30 @@ class FrozenPipeline(Transform):
         grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
         **kwargs,
-        ) -> Points:
+        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
         if isinstance(points, np.ndarray):
             points = to_tensor(points)
             return_type = 'numpy'
         else:
             return_type = 'torch'
-        size = to_tensor(size, device=points.device, dtype=torch.int32)
-        affine = to_tensor(affine, device=points.device)
-
-        print('pipeline: transform points')
-        print('points: ', points)
 
         # Chain 'transform_points' calls for SpatialTransforms.
-        grid_t = (size, affine)
+        grid_t = grid 
         points_t = points
         affine_chain = []   # Resolve chains of 4x4 affines before applying to large Nx4 points matrix.
         for i, t in enumerate(self.__transforms):
-            print('transform: ', i)
-            # Get current FOV, transform might need e.g. for centre of image for flip/crop/rotate.
-            size_t, affine_t = grid_t
-            print('grid params: ', size_t, affine_t)
-
             if isinstance(t, GridTransform):
                 # GridTransforms don't move points/objects.
+                # Get current SamplingGrid, transform might need e.g. for centre of image for flip/crop/rotate.
                 grid_t = t.transform_grid(size_t, affine=affine_t)
             elif isinstance(t, Identity):
                 pass
             elif isinstance(t, IntensityTransform):
                 pass
             elif isinstance(t, SpatialTransform):
-                # SpatialTransforms don't affect the grid.
-                okwargs = dict(
-                    affine=affine_t,
-                    size=size_t,
-                )
                 if isinstance(t, Affine):
                     # Store affine for later.
-                    t_affine = t.get_affine_transform(points_t.device, **okwargs)
+                    t_affine = t.get_affine_transform(points_t.device, grid_t)
                     # Transform 't' iterates forwards through the transform list.
                     # We want transforms that are earlier in the list to be applied first (i.e. to be
                     # later in the affine chain). So prepend transforms to the list.
@@ -352,7 +334,7 @@ class FrozenPipeline(Transform):
                         affine_chain = []
 
                     # Perform current transform.
-                    points_t = t.transform_points(points_t, filter_offgrid=False, **okwargs)
+                    points_t = t.transform_points(points_t, filter_offgrid=False, grid=grid_t)
             else:
                 raise ValueError(f"Unrecognised transform type: {type(t)}.")
 
@@ -364,21 +346,20 @@ class FrozenPipeline(Transform):
 
         # Filter off-grid points.
         if filter_offgrid:
-            size_t, affine_t = grid_t
-            fov_d = fov(size, affine_t)
+            fov_d = fov(grid_t)
             to_keep = (points_t >= fov_d[0]) & (points_t < fov_d[1])
             to_keep = to_keep.all(axis=1)
             points_t = points_t[to_keep]
             indices = torch.where(to_keep)[0]
             if return_type == 'numpy':
-                points_t, indices = to_array(points_t), to_array(indices)
+                points_t, indices = to_numpy(points_t), to_numpy(indices)
             if return_filtered:
                 return points_t, indices
             else:
                 return points_t
         else:
             if return_type == 'numpy':
-                points_t = to_array(points_t)
+                points_t = to_numpy(points_t)
             return points_t
 
     @property

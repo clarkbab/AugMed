@@ -53,11 +53,10 @@ def foreground_fov_width(
     return fov_w
 
 def fov(
-    size: SizeTensor,
-    affine: AffineTensor | None = None,
-    raise_error: bool = True,
+    grid: SamplingGridTensor,
     ) -> BoxTensor:
     # Get fov in voxels.
+    size, affine = grid
     n_dims = len(size)
     fov_vox = torch.stack([
         torch.zeros(n_dims, dtype=torch.int32, device=size.device),
@@ -73,24 +72,24 @@ def fov(
     return fov_mm
 
 def fov_centre(
-    size: SizeTensor,
-    affine: AffineTensor | None = None,
+    grid: SamplingGridTensor,
     **kwargs,
     ) -> PointTensor | PixelTensor | VoxelTensor:
     # Get FOV.
-    fov_d = fov(size, affine=affine, **kwargs)
+    fov_d = fov(grid, **kwargs)
 
     # Get FOV centre.
     fov_c = fov_d.sum(dim=0) / 2
+    _, affine = grid
     if affine is None:
         fov_c = torch.round(fov_c).type(torch.int32)
     return fov_c
 
 def fov_width(
-    data: LabelImageTensor,
+    grid: SamplingGridTensor,
     **kwargs,
     ) -> SizeTensor:
-    fov_d = fov(data, **kwargs)
+    fov_d = fov(grid, **kwargs)
     
     # Get width.
     min, max = fov_d

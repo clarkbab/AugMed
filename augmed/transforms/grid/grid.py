@@ -21,14 +21,14 @@ class GridTransform(Transform):
     # Just removes voxels outside the transformed FOV.
     @alias_kwargs([
         ('a', 'affine'),
-        ('rf', 'return_grid'),
+        ('rf', 'return_affine'),
     ])
     def transform_images(
         self,
         image: Image | List[Image],
         affine: Affine | None = None,
-        return_grid: bool = False,
-        ) -> Image | List[Image | List[SamplingGrid]]:
+        return_affine: bool = False,
+        ) -> Image | List[Image | Affine]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
         return_types = ['numpy' if isinstance(i, np.ndarray) else 'torch' for i in images]
         images = [to_tensor(i, device=self._device) for i in images]
@@ -55,31 +55,27 @@ class GridTransform(Transform):
         size_t, _, _ = grid_t
         points_t = points_t.reshape(*to_tuple(size_t), self._dim)
 
+        # The output affine comes from the transformed grid.
+        _, affine_out = grid_t
+        
         # Crop images.
         image_ts = []
-        grid_ts = []
         for image, rt in zip(images, return_types):
             # Perform resample.
-            print('grid resample')
-            print(image.dtype)
             image_t = grid_sample(image, a, points_t.to(image.device))
-            print(image_t.dtype)
 
             # Convert to return types.
             if rt == 'numpy': 
-                image_t = to_array(image_t)
-                if return_grid:
-                    grid_t = tuple(to_array(g) for g in grid_t)
+                image_t = to_numpy(image_t)
             image_ts.append(image_t)
-            if return_grid:
-                grid_ts.append(grid_t)
 
         results = image_ts[0] if image_was_single else image_ts
-        if return_grid:
+        if return_affine:
+            out = to_numpy(affine_out) if return_types[0] == 'numpy' else affine_out
             if isinstance(results, list):
-                results.append(grid_ts)
+                results.append(out)
             else:
-                results = [results, grid_ts]
+                results = [results, out]
 
         return results
 
