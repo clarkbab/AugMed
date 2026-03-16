@@ -18,9 +18,9 @@ class Flip(Affine):
         self,
         flips: bool | Tuple[bool] | np.ndarray | torch.Tensor,
         flip_centre: Point | Literal['image-centre'] = 'image-centre',
-        dim: Dim = 3,
+        dim: SpatialDim = 3,
         **kwargs) -> None:
-        # Dim is defined in superclass, but we need to know "scaling" first for parent class.
+        # SpatialDim is defined in superclass, but we need to know "scaling" first for parent class.
         # Let parent handle the extension? We can't do this, it'll be confusing talking about
         # "scaling" instead of "flips" to the user.
         self._dim = dim

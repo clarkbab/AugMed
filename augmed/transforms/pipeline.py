@@ -89,6 +89,8 @@ class FrozenPipeline(Transform):
         return self.__transforms[i]
 
     # Groups transforms by type (intensity vs. grid/spatial).
+    # This is because we can "backward_transform_points" through a whole
+    # group before performing a single resample.
     def __get_transform_groups(
         self,
         ) -> List[List[Transform]]:
@@ -125,7 +127,7 @@ class FrozenPipeline(Transform):
     # Returns input/output grid params for all transform groups.
     def __get_transform_groups_grid_params(
         self,
-        grid: SamplingGridTensor | None = None,
+        grid: SamplingGridTensor,
         ) -> List[List[SamplingGridTensor]]:
         # Each group contains the input grid params to each transform in the group (required
         # for some transforms), plus the final grid params (required for resampling groups).
@@ -177,9 +179,12 @@ class FrozenPipeline(Transform):
         points_h_t = torch.linalg.multi_dot(chain + [points_h.T]).T
         points_t = points_h_t[:, :-1]
         return points_t
-
+        
     def __str__(self) -> str:
-        return f"{self.__class__.__name__}({self.__transforms})"
+        params = dict(
+            transforms=self.__transforms,
+        )
+        return super().__str__(self.__class__.__name__, params)
 
     @alias_kwargs([
         ('a', 'affine'),
@@ -205,7 +210,7 @@ class FrozenPipeline(Transform):
         size = to_tensor(images[0].shape[-self._dim:], device=images[0].device, dtype=torch.int32)
         for i, img in enumerate(images[1:], 1):
             assert img.shape[-self._dim:] == images[0].shape[-self._dim:], f"All images must have the same spatial size. Expected {tuple(images[0].shape[-self._dim:])}, got {tuple(img.shape[-self._dim:])} for image {i}."
-        affine = to_tensor(affine, device=self._device, dtype=torch.float32) if affine is not None else create_affine(spacing=(1,) * self._dim, origin=(0,) * self._dim, device=self._device, return_type='torch')
+        affine = to_tensor(affine, device=self._device, dtype=torch.float32)
 
         # Load transforms - grouped by intensity or grid/spatial types.
         transform_groups = self.__get_transform_groups()
@@ -217,7 +222,7 @@ class FrozenPipeline(Transform):
         resample_points_list = []    # List[PointsTensor] 
 
         # Get grid params for each transform group.
-        grid_groups = self.__get_transform_groups_grid_params(grid=(size, affine))
+        grid_groups = self.__get_transform_groups_grid_params((size, affine))
 
         # Calculate info needed for resampling steps: moving grid params, resampling points
         # plus final grid for returning to user. 
@@ -268,7 +273,7 @@ class FrozenPipeline(Transform):
                     points = resample_points_list[j].to(image.device)
 
                     # Perform resample.
-                    image_t = grid_sample(image_t, moving_affine, points)
+                    image_t = grid_sample(image_t, moving_affine, points.to(image.device))
 
             # Get the final affine.
             _, affine_out = final_grid
@@ -295,26 +300,26 @@ class FrozenPipeline(Transform):
     def transform_points(
         self,
         points: Points,
+        affine: Affine | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool = True,
-        grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
+        # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
+        size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
         ) -> Points | List[Points | np.ndarray | torch.Tensor]:
-        if isinstance(points, np.ndarray):
-            points = to_tensor(points)
-            return_type = 'numpy'
-        else:
-            return_type = 'torch'
+        points, return_type = to_tensor(points, device=self._device, dtype=torch.float32, return_type=True)
+        size = to_tensor(size, device=points.device, dtype=torch.int32)
+        affine = to_tensor(affine, device=points.device, dtype=torch.float32)
 
         # Chain 'transform_points' calls for SpatialTransforms.
-        grid_t = grid 
+        grid_t = (size, affine) 
         points_t = points
         affine_chain = []   # Resolve chains of 4x4 affines before applying to large Nx4 points matrix.
         for i, t in enumerate(self.__transforms):
             if isinstance(t, GridTransform):
                 # GridTransforms don't move points/objects.
                 # Get current SamplingGrid, transform might need e.g. for centre of image for flip/crop/rotate.
-                grid_t = t.transform_grid(size_t, affine=affine_t)
+                grid_t = t.transform_grid(grid_t)
             elif isinstance(t, Identity):
                 pass
             elif isinstance(t, IntensityTransform):
@@ -322,7 +327,7 @@ class FrozenPipeline(Transform):
             elif isinstance(t, SpatialTransform):
                 if isinstance(t, Affine):
                     # Store affine for later.
-                    t_affine = t.get_affine_transform(points_t.device, grid_t)
+                    t_affine = t.get_affine_transform(points.device, grid=grid_t)
                     # Transform 't' iterates forwards through the transform list.
                     # We want transforms that are earlier in the list to be applied first (i.e. to be
                     # later in the affine chain). So prepend transforms to the list.
@@ -340,27 +345,31 @@ class FrozenPipeline(Transform):
 
         # Resolve affines if final transform.
         if len(affine_chain) > 0:
-            print('resolving final affine chain')
-            print('chain: ', affine_chain)
             points_t = self.__resolve_affine_chain(points_t, affine_chain)
 
         # Filter off-grid points.
         if filter_offgrid:
-            fov_d = fov(grid_t)
+            size_t, affine_t = grid_t
+            assert size_t is not None, "Size is required for filtering off-grid points."
+            assert affine_t is not None, "Affine is required for filtering off-grid points."
+            fov_d = fov(size_t, affine=affine_t)
             to_keep = (points_t >= fov_d[0]) & (points_t < fov_d[1])
             to_keep = to_keep.all(axis=1)
             points_t = points_t[to_keep]
             indices = torch.where(to_keep)[0]
-            if return_type == 'numpy':
-                points_t, indices = to_numpy(points_t), to_numpy(indices)
-            if return_filtered:
-                return points_t, indices
-            else:
-                return points_t
-        else:
-            if return_type == 'numpy':
-                points_t = to_numpy(points_t)
-            return points_t
+
+        # Convert return types.
+        if return_type is np.ndarray:
+            points_t = to_numpy(points_t)
+            if filter_offgrid and return_filtered:
+                indices = to_numpy(indices)
+
+        # Format returned values.
+        results = points_t
+        if filter_offgrid and return_filtered:
+            results = [points_t, indices]
+
+        return results
 
     @property
     def transforms(self) -> List[Transform]:
@@ -382,8 +391,6 @@ class Pipeline(RandomTransform):
     def __init__(
         self,
         transforms: RandomTransform | Transform | List[RandomTransform | Transform],
-        device: torch.device | Literal['cpu', 'cuda'] | None = None,
-        dim: int | None = None,
         freeze: bool | List[bool] = False,
         seed: int | List[int] | None = None,
         **kwargs,
@@ -393,20 +400,16 @@ class Pipeline(RandomTransform):
         freezes = arg_to_list(freeze, (bool, None), broadcast=len(transforms))
         seeds = arg_to_list(seed, (int, None), broadcast=len(transforms))
         assert len(seeds) == len(transforms), "Random seeds ('seed') must have same length as 'transforms'."
-        if device is not None:
-            [t.set_device(device) for t in transforms]
-        if dim is not None:
-            assert dim in [2, 3], "Only 2D and 3D pipelines are supported."
-            [t.set_dim(dim) for t in transforms]
+        [t.set_debug(self._debug) for t in transforms]
+        if self._device is not None:
+            [t.set_device(self._device) for t in transforms]
+        if self._dim is not None:
+            assert self._dim in [2, 3], "Only 2D and 3D pipelines are supported."
+            [t.set_dim(self._dim) for t in transforms]
         else:
             dim = transforms[0].dim
             for t in transforms:
                 assert t.dim == dim, "All transforms must have same 'dim'."
-
-        # Can be a combination of random and deterministic transforms.
-        # For example, we may always want to centre crop first, or extract patches last,
-        # with random augmentations in the middle.
-        self._dim = dim
 
         # Reseed the random transforms if requested - just easier doing it during pipeline creation rather than
         # for each transform.
@@ -423,16 +426,19 @@ class Pipeline(RandomTransform):
 
     def freeze(self) -> 'FrozenPipeline':
         transforms = [t.freeze() if isinstance(t, RandomTransform) else t for t in self.__transforms]
-        return FrozenPipeline(transforms)
+        return FrozenPipeline(transforms, device=self._device, dim=self._dim)
 
     def __getitem__(
         self,
         i: int,
         ) -> Transform:
         return self.__transforms[i]
-
+        
     def __str__(self) -> str:
-        return f"{self.__class__.__name__}({self.__transforms})"
+        params = dict(
+            transforms=self.__transforms,
+        )
+        return super().__str__(self.__class__.__name__, params)
 
     @property
     def transforms(self) -> List[Transform]:

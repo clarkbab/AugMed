@@ -42,7 +42,7 @@ def to_list(
     return to_numpy(data, **kwargs).tolist()
 
 def to_tensor(
-    data: bool | Number | str | List[bool | Number | str | List[...]] | np.ndarray | torch.Tensor | torch.Size,
+    data: bool | Number | str | List[bool | Number | str] | np.ndarray | torch.Tensor | torch.Size,
     broadcast: int | None = None,
     device: torch.device | None = None,
     dtype: torch.dtype | None = None,

@@ -3,7 +3,7 @@ from typing import *
 
 from ....typing import *
 from ....utils.args import alias_kwargs, arg_to_list, expand_range_arg
-from ....utils.conversion import to_tensor, to_tuple
+from ....utils.conversion import to_numpy, to_tensor, to_tuple
 from ....utils.geometry import fov_centre
 from ....utils.matrix import create_eye, create_scaling, create_rotation, create_translation
 from ..spatial import RandomSpatialTransform, SpatialTransform
@@ -114,12 +114,12 @@ class Affine(SpatialTransform):
         **kwargs,
         ) -> AffineTensor:
         # Get rotation matrices.
-        size, affine = grid if grid is not None else (None, None)
         if self._rotation is not None:
             # Get centre of rotation.
             if self._rotation_centre == 'image-centre':
-                if size is None:
-                    raise ValueError(f"Sampling grid (Tuple[Size, Affine | None]) required when performing rotation around image centre (centre='image-centre').")
+                if grid is None:
+                    raise ValueError(f"Sampling 'grid' required when performing rotation around image centre (centre='image-centre').")
+                size, affine = grid
                 rot_centre = fov_centre(size, affine=affine)
             else:
                 rot_centre = self._rotation_centre.to(device)
@@ -133,8 +133,9 @@ class Affine(SpatialTransform):
         # Get scaling matrices.
         if self._scaling is not None:
             if self._scaling_centre == 'image-centre':
-                if size is None:
-                    raise ValueError(f"Sampling grid (Tuple[Size, Affine | None]) required when performing scaling around image centre (centre='image-centre').")
+                if grid is None:
+                    raise ValueError(f"Sampling 'grid' required when performing rotation around image centre (centre='image-centre').")
+                size, affine = grid
                 scale_centre = fov_centre(size, affine=affine)
             else:
                 scale_centre = self._scaling_centre.to(device)
@@ -161,18 +162,18 @@ class Affine(SpatialTransform):
 
     def get_affine_transform(
         self,
-        device: torch.device,
+        device: torch.device,   # Can't infer from 'grid' as it might be None.
         grid: SamplingGrid | None = None,   # Required for 'image-centre' rotation/scale.
         **kwargs,
         ) -> AffineTensor:
         print('getting rotation forward transform')
-        size, affine = grid if grid is not None else (None, None)
         # Get rotation matrices.
         if self._rotation is not None:
             # Get centre of rotation.
             if self._rotation_centre == 'image-centre':
-                if size is None:
-                    raise ValueError(f"Sampling grid (Tuple[Size, Affine | None]) required when performing rotation around image centre (centre='image-centre').")
+                if grid is None:
+                    raise ValueError(f"Sampling 'grid' required when performing rotation around image centre (centre='image-centre').")
+                size, affine = grid
                 rot_centre = fov_centre(size, affine=affine)
             else:
                 rot_centre = self._rotation_centre.to(device)
@@ -186,8 +187,9 @@ class Affine(SpatialTransform):
         # Get scaling matrices.
         if self._scaling is not None:
             if self._scaling_centre == 'image-centre':
-                if size is None:
-                    raise ValueError(f"Sampling grid (Tuple[Size, Affine | None]) required when performing scaling around image centre (centre='image-centre').")
+                if grid is None:
+                    raise ValueError(f"Sampling 'grid' required when performing rotation around image centre (centre='image-centre').")
+                size, affine = grid
                 scale_centre = fov_centre(size, affine=affine)
             else:
                 scale_centre = self._scaling_centre.to(device)
@@ -242,18 +244,19 @@ class Affine(SpatialTransform):
     def transform_points(
         self,
         points: Points,
+        affine: Affine | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool = True,
-        grid: SamplingGrid | None = None,   # Required for 'image-centre' rotation/scale.
+        # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
+        size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
         ) -> Points | List[Points | np.ndarray | torch.Tensor]:
-        points, return_type = to_tensor(points, return_type=True)
-        size, affine = grid if grid is not None else (None, None)
+        points, return_type = to_tensor(points, device=self._device, dtype=torch.float32, return_type=True)
         size = to_tensor(size, device=points.device, dtype=points.dtype)
         affine = to_tensor(affine, device=points.device, dtype=points.dtype)
 
         # Get homogeneous matrix.
-        matrix_a = self.get_affine_transform(points.device, grid=(size, affine))
+        matrix_a = self.get_affine_transform(device, grid=grid)
 
         # Perform forward transform.
         points_h = torch.hstack([points, torch.ones((points.shape[0], 1), device=points.device, dtype=points.dtype)])  # Move to homogeneous coords.
@@ -263,8 +266,8 @@ class Affine(SpatialTransform):
         # Forward transformed points could end up off-screen and should be filtered.
         # However, we need to know which points are returned for loss calc for example.
         if filter_offgrid:
-            assert size is not None
-            assert affine is not None
+            assert size is not None, "Size must be provided for filtering off-grid points."
+            assert affine is not None, "Affine must be provided for filtering off-grid points."
             grid = torch.stack([affine[:3, 3], affine[:3, 3] + size * affine[:3, :3].diag()]).to(points.device)
             to_keep = (points_t >= grid[0]) & (points_t < grid[1])
             to_keep = to_keep.all(axis=1)
@@ -273,13 +276,15 @@ class Affine(SpatialTransform):
 
         # Convert return types.
         if return_type is np.ndarray:
-            points_t = points_t.cpu().numpy()
-            indices = indices.cpu().numpy() if filter_offgrid else None
+            points_t = to_numpy(points_t)
+            if filter_offgrid and return_filtered:
+                indices = to_numpy(indices)
 
         # Format returned values.
         results = points_t
         if filter_offgrid and return_filtered:
             results = [points_t, indices]
+
         return results
 
 

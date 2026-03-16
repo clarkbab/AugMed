@@ -11,14 +11,64 @@ from ..typing import (
     Affine3D, ChannelLabelImage2D, ChannelLabelImage3D, Image2D, Image3D,
     Point3D, Points3D,
 )
+from .assertions import assert_orientation
 from .conversion import to_numpy
-from .matrix import affine_spacing
+from .geometry import foreground_fov_centre
+from .matrix import affine_origin, affine_spacing
+
+VIEWS = ['Sagittal', 'Coronal', 'Axial']
+
+def _get_view_aspect(
+    view: int,
+    affine: np.ndarray | None,
+    ) -> float | None:
+    if affine is None:
+        return None
+    spacing = affine_spacing(affine)
+    axes = [i for i in range(3) if i != view]
+    aspect = float(spacing[axes[1]] / spacing[axes[0]])
+    return aspect
+
+def _get_view_origin(
+    view: int,
+    orientation: Orientation = 'LPS',
+    ) -> tuple[Literal['lower', 'upper'], Literal['lower', 'upper']]:
+    assert_orientation(orientation)
+    if view == 0:
+        origin_x = 'lower' if orientation[1] == 'P' else 'upper'
+        origin_y = 'lower' if orientation[2] == 'S' else 'upper'
+    elif view == 1:
+        origin_x = 'lower' if orientation[0] == 'L' else 'upper'
+        origin_y = 'lower' if orientation[2] == 'S' else 'upper'
+    else:
+        origin_x = 'lower' if orientation[0] == 'L' else 'upper'
+        origin_y = 'upper' if orientation[1] == 'P' else 'lower'
+
+    return (origin_x, origin_y)
+
+def _get_view_slice(
+    view: int,
+    data: np.ndarray,
+    idx: int,
+    ) -> np.ndarray:
+    slicing: list[int | slice] = [slice(None)] * 3
+    slicing[view] = idx
+    return data[tuple(slicing)]
+
+def _get_view_xy(
+    view: int,
+    values: tuple | np.ndarray,
+    ) -> tuple:
+    axes = [i for i in range(3) if i != view]
+    return values[axes[0]], values[axes[1]]
 
 def plot_hist(
     data: np.ndarray | torch.Tensor,
     ax: mpl.axes.Axes | None = None,
     bins: int = 50,
     log_scale: bool = False,
+    min: Number | None = None,
+    max: Number | None = None,
     title: str | None = None,
     x_label: str | None = None,
     y_label: str | None = None,
@@ -30,7 +80,10 @@ def plot_hist(
         show = True
     else:
         show = False
-    ax.hist(data.flatten(), bins=bins, color='gray')
+    okwargs = {}
+    if min is not None and max is not None:
+        okwargs['range'] = (min, max)
+    ax.hist(data.flatten(), bins=bins, color='gray', **okwargs)
     if log_scale:
         ax.set_yscale('log')
 
@@ -99,67 +152,10 @@ def plot_slice(
 
     return ax
 
-_VIEW_NAMES = ['Sagittal', 'Coronal', 'Axial']
-
-def _get_view_slice(
-    data: np.ndarray,
-    view: int,
-    idx: int,
-    ) -> np.ndarray:
-    slicing: list[int | slice] = [slice(None)] * 3
-    slicing[view] = idx
-    return data[tuple(slicing)]
-
-def _resolve_idx(
-    shape: tuple[int, ...],
-    view: int,
-    idx: int | float,
-    affine: np.ndarray | None = None,
-    centre: np.ndarray | None = None,
-    labels: np.ndarray | None = None,
-    ) -> int:
-    n = shape[view]
-
-    # Centre on label FOV midpoint.
-    if centre is not None:
-        if centre.ndim >= 2:
-            # Label volume(s): find midpoint of foreground along this axis.
-            fg = centre.any(axis=0) if centre.ndim == 4 else centre
-            coords = np.argwhere(fg)
-            if len(coords) > 0:
-                return int(coords[:, view].mean())
-        else:
-            # Point in world or voxel coordinates.
-            pt = centre.flatten()
-            if affine is not None:
-                spacing = np.abs(np.diag(affine)[:3])
-                origin = affine[:3, -1]
-                vox = (pt - origin) / spacing
-                return int(np.clip(np.round(vox[view]), 0, n - 1))
-            return int(np.clip(np.round(pt[view]), 0, n - 1))
-
-    # Fractional index.
-    if isinstance(idx, float) and 0 <= idx <= 1:
-        return int(np.round(idx * (n - 1)))
-
-    return int(np.clip(idx, 0, n - 1))
-
-def _get_view_aspect(
-    view: int,
-    affine: np.ndarray | None,
-    ) -> float | str:
-    if affine is None:
-        return None
-    spacing = affine_spacing(affine)
-    axes = [i for i in range(3) if i != view]
-    aspect = float(spacing[axes[0]] / spacing[axes[1]])
-    print(f'Aspect for view {view} with spacing {spacing}: {aspect}')
-    return aspect
-
 def plot_volume(
     data: Image3D,
     affine: Affine3D | None = None,
-    centre: ChannelLabelImage3D | Point3D | None = None,
+    centre: ChannelLabelImage3D | Point3D | str | None = None,
     cmap: str = 'gray',
     dose: Image3D | None = None,
     dose_alpha_min: float = 0.3,
@@ -167,11 +163,15 @@ def plot_volume(
     dose_cmap: str = 'turbo',
     dose_cmap_trunc: float = 0.15,
     figsize: tuple[float, float] = (16, 6),
-    idx: int | float = 0.5,
+    idx: int | float | None = None,
     labels: ChannelLabelImage3D | None = None,
+    orientation: Orientation = 'LPS',
     label_alpha: float = 0.3,
     points: Points3D | None = None,
+    points_colour: str = 'gradient',
+    show_point_idxs: bool = False,
     show_title: bool = True,
+    use_image_coords: bool = False,
     view: int | list[int] | Literal['all'] = 'all',
     vmin: float | None = None,
     vmax: float | None = None,
@@ -182,7 +182,8 @@ def plot_volume(
     dose = to_numpy(dose)
     labels = to_numpy(labels)
     points = to_numpy(points)
-    centre = to_numpy(centre)
+    if not isinstance(centre, str):
+        centre = to_numpy(centre)
 
     # Resolve views.
     views = list(range(3)) if view == 'all' else (view if isinstance(view, list) else [view])
@@ -193,16 +194,19 @@ def plot_volume(
     axs = axs[0]
 
     for col_ax, v in zip(axs, views):
-        resolved_idx = _resolve_idx(data.shape, v, idx, affine=affine, centre=centre, labels=labels)
-        image = _get_view_slice(data, v, resolved_idx)
+        resolved_idx = _get_view_idx(v, data.shape, affine=affine, centre=centre, idx=idx, labels=labels, points=points)
+        image = _get_view_slice(v, data, resolved_idx)
         aspect = _get_view_aspect(v, affine)
+        origin_x, origin_y = _get_view_origin(v, orientation=orientation)
 
         # The two non-view axes: first is displayed on x, second on y.
-        col_ax.imshow(image.T, aspect=aspect, cmap=cmap, origin='lower', vmin=vmin, vmax=vmax)
+        col_ax.imshow(image.T, aspect=aspect, cmap=cmap, origin=origin_y, vmin=vmin, vmax=vmax)
+        if origin_x == 'upper':
+            col_ax.invert_xaxis()
 
         # Dose overlay.
         if dose is not None:
-            dose_slice = _get_view_slice(dose, v, resolved_idx)
+            dose_slice = _get_view_slice(v, dose, resolved_idx)
             base_cmap = plt.get_cmap(dose_cmap)
             trunc_cmap = mpl.colors.LinearSegmentedColormap.from_list(
                 f'{base_cmap.name}_truncated',
@@ -212,47 +216,119 @@ def plot_volume(
             colours[0, -1] = 0
             colours[1:, -1] = np.linspace(dose_alpha_min, dose_alpha_max, trunc_cmap.N - 1)
             alpha_cmap = mpl.colors.ListedColormap(colours)
-            col_ax.imshow(dose_slice.T, aspect=aspect, cmap=alpha_cmap, origin='lower')
+            col_ax.imshow(dose_slice.T, aspect=aspect, cmap=alpha_cmap, origin=origin_y)
 
         # Label overlays.
         if labels is not None:
             for j, lab in enumerate(labels):
-                label_slice = _get_view_slice(lab, v, resolved_idx)
+                label_slice = _get_view_slice(v, lab, resolved_idx)
                 cmap_label = mpl.colors.ListedColormap(((1, 1, 1, 0), palette[j]))
-                col_ax.imshow(label_slice.T, alpha=label_alpha, aspect=aspect, cmap=cmap_label, origin='lower')
+                col_ax.imshow(label_slice.T, alpha=label_alpha, aspect=aspect, cmap=cmap_label, origin=origin_y)
                 col_ax.contour(label_slice.T, colors=[palette[j]], levels=[0.5], linestyles='solid')
 
         # Point overlays.
         if points is not None:
             view_axes = [i for i in range(3) if i != v]
             if affine is not None:
-                spacing = np.abs(np.diag(affine)[:3])
-                origin = affine[:3, -1]
-            for pt in points:
-                if affine is not None:
-                    vox = (pt - origin) / spacing
-                else:
-                    vox = pt
-                # Only plot points near the current slice.
-                if abs(vox[v] - resolved_idx) < 1.0:
-                    col_ax.scatter(vox[view_axes[0]], vox[view_axes[1]], c='red', marker='x', s=40, zorder=5)
+                spacing = affine_spacing(affine)
+                origin = affine_origin(affine)
+            if points_colour == 'gradient' and len(points) > 1:
+                points_cmap = mpl.colors.LinearSegmentedColormap.from_list('warm_bright', ['#FFE600', '#FF8C00', '#FF3300', '#FF0066'])
+                points_colours = [points_cmap(i / (len(points) - 1)) for i in range(len(points))]
+            else:
+                points_colours = ['yellow'] * len(points)
+            for pi, p in enumerate(points):
+                vox = (p - origin) / spacing if affine is not None else p
+                col_ax.scatter(vox[view_axes[0]], vox[view_axes[1]], c=[points_colours[pi]], marker='o', s=20, zorder=5)
+                if show_point_idxs:
+                    col_ax.annotate(str(pi), (vox[view_axes[0]], vox[view_axes[1]]),
+                        textcoords='offset points', xytext=(5, 5),
+                        fontsize=8, color=points_colours[pi], zorder=5)
+
+        # Coordinate ticks.
+        size_x, size_y = _get_view_xy(v, data.shape)
+        x_tick_spacing = np.unique(np.diff(col_ax.get_xticks()))[0]
+        x_ticks = np.arange(0, size_x, x_tick_spacing)
+        y_tick_spacing = np.unique(np.diff(col_ax.get_yticks()))[0]
+        y_ticks = np.arange(0, size_y, y_tick_spacing)
+
+        if not use_image_coords and affine is not None:
+            s = affine_spacing(affine)
+            o = affine_origin(affine)
+            sx, sy = _get_view_xy(v, s)
+            ox, oy = _get_view_xy(v, o)
+            col_ax.set_xticks(x_ticks)
+            col_ax.set_xticklabels([f'{t * sx + ox:.1f}' for t in x_ticks])
+            col_ax.set_yticks(y_ticks)
+            col_ax.set_yticklabels([f'{t * sy + oy:.1f}' for t in y_ticks])
+        else:
+            col_ax.set_xticks(x_ticks)
+            col_ax.set_yticks(y_ticks)
 
         # Title.
         if show_title:
-            title = f'{_VIEW_NAMES[v]}, slice {resolved_idx}'
+            title = f'{VIEWS[v]}, slice {resolved_idx}'
             if affine is not None:
-                spacing = np.abs(np.diag(affine)[:3])
-                origin_val = affine[:3, -1]
-                world_pos = resolved_idx * spacing[v] + origin_val[v]
+                s = affine_spacing(affine)
+                o = affine_origin(affine)
+                world_pos = resolved_idx * s[v] + o[v]
                 title += f' ({world_pos:.1f}mm)'
             col_ax.set_title(title)
 
-        # Hide spines and ticks.
+        # Hide spines.
         for p in ['right', 'top', 'bottom', 'left']:
             col_ax.spines[p].set_visible(False)
-        col_ax.set_xticks([])
-        col_ax.set_yticks([])
 
     plt.tight_layout()
     plt.show()
-    return axs
+
+def _get_view_idx(
+    view: int,
+    size: Size3DArray,
+    idx: int | float | None = None,
+    affine: Affine3DArray | None = None,
+    centre: LabelImage3DArray | str | None = None,
+    labels: BatchLabelImage3DArray | None = None,
+    points: Points3DArray | None = None,
+    ) -> int:
+    # Default to image centre if no idx or centre provided.
+    if idx is None and centre is None:
+        idx = 0.5
+
+    # Fractional index.
+    if isinstance(idx, int):
+        return idx
+    elif isinstance(idx, float) and 0 <= idx <= 1:
+        idx = int(np.round(idx * (size[view] - 1)))
+        return idx
+
+    # Resolve string centre references (e.g. 'labels:0', 'points:3').
+    if isinstance(centre, str):
+        source, i = centre.split(':')
+        i = int(i)
+        if source == 'labels':
+            if labels is None:
+                raise ValueError(f"centre='{centre}' but no labels were provided.")
+            centre = foreground_fov_centre(labels[i], affine=affine)
+        elif source == 'points':
+            if points is None:
+                raise ValueError(f"centre='{centre}' but no points were provided.")
+            centre = points[i]
+        else:
+            raise ValueError(f"Unknown centre '{source}'. Expected 'labels' or 'points'.")
+    elif isinstance(centre, np.ndarray):
+        centre = foreground_fov_centre(centre, affine=affine)
+    else:
+        raise ValueError(f"Invalid centre: {centre}. Expected a string reference, a label image, or a point.")
+
+    # Convert to voxel coordinates.
+    if affine is not None:
+        spacing = affine_spacing(affine)
+        origin = affine_origin(affine)
+        if centre is not None:
+            centre = (centre - origin) / spacing
+
+    # Extract view index.
+    idx = int(np.clip(np.round(centre[view]), 0, size[view] - 1))
+
+    return idx

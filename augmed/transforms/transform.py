@@ -10,11 +10,13 @@ from ..utils.args import alias_kwargs, arg_to_list
 class Transform:
     def __init__(
         self,
+        debug: bool = False,
         device: torch.device | Literal['cpu', 'cuda'] | None = None,
-        dim: Dim = 3,
+        dim: SpatialDim = 3,
         verbose: bool = False,
         ) -> None:
         assert dim in [2, 3], "Only 2D and 3D flips are supported."
+        self._debug = debug
         self._device = torch.device(device) if isinstance(device, str) else device
         self._dim = dim
         self._verbose = verbose
@@ -27,7 +29,7 @@ class Transform:
         return self.transform(*args, **kwargs)
 
     @property
-    def dim(self) -> Dim:
+    def dim(self) -> SpatialDim:
         return self._dim
 
     @property
@@ -39,6 +41,13 @@ class Transform:
     def __repr__(self) -> str:
         return str(self)
 
+    # Can be called by Pipeline to set sub-transforms debug mode.
+    def set_debug(
+        self,
+        debug: bool,
+        ) -> None:
+        self._debug = debug
+
     # Can be called by Pipeline to set sub-transforms devices.
     def set_device(
         self,
@@ -49,7 +58,7 @@ class Transform:
     # Can be called by Pipeline to set sub-transforms dims.
     def set_dim(
         self,
-        dim: Dim,
+        dim: SpatialDim,
         ) -> None:
         assert dim in [2, 3], "Only 2D and 3D transforms are supported."
         self._dim = dim
@@ -91,7 +100,6 @@ class Transform:
         size: Size | None = None,
         ) -> Image | Points | List[Image | Points | Affine | TransformParams]:
         datas, data_was_single = arg_to_list(data, (np.ndarray, torch.Tensor), return_expanded=True)
-
 
         # Infer data types.
         image_indices = []
@@ -190,6 +198,8 @@ class RandomTransform(Transform):
         params: Dict[str, Any],
         ) -> None:
         # Copy general params from random -> frozen transform. I always forget these.
+        params['debug'] = self._debug
+        params['device'] = self._device
         params['dim'] = self._dim
         return klass(**params)
 

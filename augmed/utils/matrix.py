@@ -4,11 +4,12 @@ from typing import *
 
 from ..typing import *
 from .args import arg_to_list
-from .conversion import to_tensor
+from .conversion import to_numpy, to_tensor
 
 def affine_origin(
     affine: AffineTensor,
     ) -> PointTensor:
+    affine, return_type = to_tensor(affine, return_type=True)
 
     # Get origin.
     dim = affine.shape[0] - 1
@@ -17,11 +18,16 @@ def affine_origin(
     else:
         origin = to_tensor([affine[0, 3], affine[1, 3], affine[2, 3]], device=affine.device, dtype=affine.dtype)
 
+    # Change return type if needed.
+    if return_type is np.ndarray:
+        origin = to_numpy(origin)   
+
     return origin
 
 def affine_spacing(
     affine: Affine,
-    ) -> SpacingTensor:
+    ) -> Affine:
+    affine, return_type = to_tensor(affine, return_type=True)
 
     # Get spacing.
     dim = affine.shape[0] - 1
@@ -30,6 +36,10 @@ def affine_spacing(
     else:
         spacing = to_tensor([affine[0, 0], affine[1, 1], affine[2, 2]], device=affine.device, dtype=affine.dtype)
 
+    # Change return type if needed.
+    if return_type is np.ndarray:
+        spacing = to_numpy(spacing)
+
     return spacing
 
 # Might be public facing - allow more than just Tensor types.
@@ -37,10 +47,10 @@ def create_affine(
     spacing: Spacing,
     origin: Point,
     device: torch.device = torch.device('cpu'),
+    dtype: torch.dtype = torch.float32,
     ) -> AffineTensor:
     dim = len(spacing)
-    assert len(origin) == dim, f"Length of 'origin' must match length of 'spacing'. Got {spacing} and {origin}." 
-    affine = create_eye(dim, device=device)
+    affine = create_eye(dim, device=device, dtype=dtype)
     if dim == 2:
         affine[0, 0] = spacing[0]
         affine[1, 1] = spacing[1]
@@ -53,11 +63,10 @@ def create_affine(
         affine[0, 3] = origin[0]
         affine[1, 3] = origin[1]
         affine[2, 3] = origin[2]
-
     return affine
 
 def create_eye(
-    dim: Dim,
+    dim: SpatialDim,
     device: torch.device = torch.device('cpu'),
     dtype: torch.dtype = torch.float32,
     ) -> torch.Tensor:
@@ -66,7 +75,7 @@ def create_eye(
 def create_rotation(
     rotation: Number | Tuple[Number] | np.ndarray | torch.Tensor,   # In radians.
     device: torch.device = torch.device('cpu'),
-    dim: Dim | None = None,
+    dim: SpatialDim | None = None,
     dtype: torch.dtype = torch.float32,
     ) -> torch.Tensor:
     if dim is None:
@@ -108,7 +117,7 @@ def create_rotation(
 def create_scaling(
     scaling: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor,
     device: torch.device = torch.device('cpu'),
-    dim: Dim | None = None,
+    dim: SpatialDim | None = None,
     dtype: torch.dtype = torch.float32,
     ) -> torch.Tensor:
     if dim is None:
@@ -124,7 +133,7 @@ def create_scaling(
 def create_translation(
     translation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor,
     device: torch.device = torch.device('cpu'),
-    dim: Dim | None = None,
+    dim: SpatialDim | None = None,
     dtype: torch.dtype = torch.float32,
     ) -> torch.Tensor:
     if dim is None:

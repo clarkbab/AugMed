@@ -98,7 +98,7 @@ def arg_to_list(
 # Expands an arg to the required length based on 'dim'.
 def expand_range_arg(
     arg: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor,
-    dim: Dim = 3,
+    dim: SpatialDim = 3,
     negate_lower: bool = False,
     vals_per_dim: int = 2,
     ) -> Tuple[Number, ...]:

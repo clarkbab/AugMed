@@ -18,7 +18,7 @@ def grid_sample(
     points: PointsTensor | ImageTensor,
     mode: Literal['bicubic', 'bilinear', 'nearest'] = 'bilinear',
     padding: Number | Literal['border', 'max', 'min', 'reflection', 'zeros'] = 'min',
-    dim: Dim = 3,
+    dim: SpatialDim = 3,
     **kwargs,
     ) -> ImageTensor | PointsTensor:
     if points.shape[-1] == 2 or points.shape[-1] == 3:

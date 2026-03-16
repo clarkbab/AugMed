@@ -3,12 +3,14 @@ from typing import *
 
 from ..typing import *
 from .args import alias_kwargs
+from .conversion import to_numpy, to_tensor
 from .matrix import affine_spacing, affine_origin
 
 def foreground_fov(
-    data: LabelImageTensor,
-    affine: AffineTensor | None = None,
-    ) -> BoxTensor | None:
+    data: LabelImage,
+    affine: Affine | None = None,
+    ) -> Box | None:
+    data, return_type = to_tensor(data, return_type=True)
     if data.sum() == 0:
         return None
 
@@ -19,44 +21,64 @@ def foreground_fov(
         non_zero.max(dim=0)
     ])
     if affine is None:
+        if return_type is np.ndarray:
+            fov_vox = to_numpy(fov_vox)
         return fov_vox
 
     # Get fov in mm.
     spacing = affine_spacing(affine)
     origin = affine_origin(affine)
     fov_mm = fov_vox * spacing + origin
+
+    if return_type is np.ndarray:
+         fov_mm = to_numpy(fov_mm)
+
     return fov_mm
 
 def foreground_fov_centre(
-    data: LabelImageTensor,
-    affine: AffineTensor | None = None,
+    data: LabelImage,
+    affine: Affine | None = None,
     **kwargs,
-    ) -> PointTensor | PixelTensor | VoxelTensor | None:
+    ) -> Point | Pixel | Voxel | None:
+    data, return_type = to_tensor(data, return_type=True)
+
     fov_d = foreground_fov(data, affine=affine, **kwargs)
     if fov_d is None:
         return None
     fov_c = torch.tensor(fov_d).sum(dim=0) / 2
     if affine is None:
         fov_c = torch.round(fov_c).type(torch.int32)
+
+    if return_type is np.ndarray:
+        fov_c = to_numpy(fov_c)
+        
     return fov_c
 
 def foreground_fov_width(
-    data: LabelImageTensor,
+    data: LabelImage,
     **kwargs,
-    ) -> SizeTensor | None:
+    ) -> Size | None:
+    data, return_type = to_tensor(data, return_type=True)
+
     # Get foreground fov.
     fov_fg = foreground_fov(data, **kwargs)
     if fov_fg is None:
         return None
     min, max = fov_fg
     fov_w = max - min
+
+    if return_type is np.ndarray:
+        fov_w = to_numpy(fov_w)
+
     return fov_w
 
 def fov(
-    grid: SamplingGridTensor,
+    size: Size,
+    affine: Affine | None = None,
     ) -> BoxTensor:
+    size, return_type = to_tensor(size, return_type=True)
+
     # Get fov in voxels.
-    size, affine = grid
     n_dims = len(size)
     fov_vox = torch.stack([
         torch.zeros(n_dims, dtype=torch.int32, device=size.device),
@@ -69,29 +91,46 @@ def fov(
     spacing = affine_spacing(affine)
     origin = affine_origin(affine)
     fov_mm = fov_vox * spacing + origin
+
+    if return_type is np.ndarray:
+        fov_mm = to_numpy(fov_mm)
+
     return fov_mm
 
 def fov_centre(
-    grid: SamplingGridTensor,
+    size: Size,
+    affine: Affine | None = None,
     **kwargs,
-    ) -> PointTensor | PixelTensor | VoxelTensor:
+    ) -> Point | Pixel | Voxel:
+    size, return_type = to_tensor(size, return_type=True)
+
     # Get FOV.
-    fov_d = fov(grid, **kwargs)
+    fov_d = fov(size, affine=affine, **kwargs)
 
     # Get FOV centre.
     fov_c = fov_d.sum(dim=0) / 2
-    _, affine = grid
     if affine is None:
         fov_c = torch.round(fov_c).type(torch.int32)
+
+    if return_type is np.ndarray:
+        fov_c = to_numpy(fov_c)
+
     return fov_c
 
 def fov_width(
-    grid: SamplingGridTensor,
+    size: Size,
+    affine: Affine | None = None,
     **kwargs,
-    ) -> SizeTensor:
-    fov_d = fov(grid, **kwargs)
+    ) -> Size:
+    size, return_type = to_tensor(size, return_type=True)
+
+    fov_d = fov(size, affine=affine, **kwargs)
     
     # Get width.
     min, max = fov_d
     fov_w = max - min
+
+    if return_type is np.ndarray:
+        fov_w = to_numpy(fov_w)
+
     return fov_w

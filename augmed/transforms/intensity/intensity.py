@@ -70,15 +70,22 @@ class IntensityTransform(Transform):
         return_filtered: bool = False,
         **kwargs,
         ) -> Points | List[Points | np.ndarray | torch.Tensor]:
-        if isinstance(points, np.ndarray):
-            return_type = 'numpy'
-        else:
-            return_type = 'torch'
+        points, return_type = to_tensor(points, device=self._device, dtype=torch.float32, return_type=True)
         if return_filtered:
-            indices = np.array([]) if return_type == 'numpy' else to_tensor([], device=points.device)
-            return points, indices
-        else:
-            return points
+            indices = np.array([]) if return_type is np.ndarray else to_tensor([], device=points.device)
+
+        # Convert return types.
+        if return_type is np.ndarray:
+            points_t = to_numpy(points_t)
+            if filter_offgrid and return_filtered:
+                indices = to_numpy(indices)
+
+        # Format returned values.
+        results = points_t
+        if filter_offgrid and return_filtered:
+            results = [points_t, indices]
+
+        return results
 
 class RandomIntensityTransform(RandomTransform, IntensityTransform):
     def __init__(

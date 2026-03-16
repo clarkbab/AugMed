@@ -42,10 +42,10 @@ class GridTransform(Transform):
         size = to_tensor(images[0].shape[-self._dim:], device=images[0].device, dtype=torch.int32)
         for i, img in enumerate(images[1:], 1):
             assert img.shape[-self._dim:] == images[0].shape[-self._dim:], f"All images must have the same spatial size. Expected {tuple(images[0].shape[-self._dim:])}, got {tuple(img.shape[-self._dim:])} for image {i}."
-        a = to_tensor(affine, device=self._device, dtype=torch.float32) if affine is not None else create_affine(spacing=(1,) * self._dim, origin=(0,) * self._dim)
+        affine = to_tensor(affine, device=self._device, dtype=torch.float32)
 
         # Get new FOV (shared across all images).
-        grid_t = self.transform_grid(size, affine=a)
+        grid_t = self.transform_grid((size, affine))
 
         # Get resample points.
         points = grid_points(*grid_t)

@@ -65,7 +65,7 @@ class Pad(GridTransform):
         size, affine = grid
         if self.__pad_add is not None:
             # Get the current FOV.
-            fov_min, fov_max = fov(grid)
+            fov_min, fov_max = fov(size, affine=affine)
 
             # Get the amounts to add.
             pad_add_min = self.__pad_add[:, 0].to(size.device)
@@ -135,28 +135,24 @@ class Pad(GridTransform):
         self,
         points: Points,
         # Can a pad ever move points offgrid??
+        affine: Affine | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool = True,
-        grid: SamplingGrid | None = None,   # Required for 'image-centre' pad centre.
+        # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
+        size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
         ) -> Points | List[Points | np.ndarray | torch.Tensor]:
-        if isinstance(points, np.ndarray):
-            points = to_tensor(points)
-            return_type = 'numpy'
-        else:
-            return_type = 'torch'
-        size, affine = grid if grid is not None else (None, None)
+        points, return_type = to_tensor(points, device=self._device, dtype=torch.float32, return_type=True)
         size = to_tensor(size, device=points.device, dtype=points.dtype)
         affine = to_tensor(affine, device=points.device, dtype=points.dtype)
 
         # Forward transformed points could end up off-screen and should be filtered.
         # However, we need to know which points are returned for loss calc for example.
         if filter_offgrid:
-            assert size is not None
-            assert affine is not None
-
             # Get new grid.
-            size_t, affine_t = self.transform_grid(size, affine=affine)
+            assert size is not None, "Size must be provided for filtering off-grid points."
+            assert affine is not None, "Affine must be provided for filtering off-grid points."
+            size_t, affine_t = self.transform_grid((size, affine))
             spacing_t = affine_spacing(affine_t)
             origin_t = affine_origin(affine_t)
 
@@ -166,22 +162,23 @@ class Pad(GridTransform):
 
             # Pad points.
             pad_mm = torch.stack([pad_min_mm, pad_max_mm]).to(points.device)
-            print(pad_mm)
             to_keep = (points >= pad_mm[0]) & (points < pad_mm[1])
-            print(to_keep)
             to_keep = to_keep.all(axis=1)
             points_t = points[to_keep]
             indices = torch.where(to_keep)[0]
-            if return_type == 'numpy':
-                points_t, indices = points_t.numpy(), indices.numpy()
-            if return_filtered:
-                return points_t, indices
-            else:
-                return points_t
-        else:
-            if return_type == 'numpy':
-                points = points.numpy()
-            return points
+
+        # Convert return types.
+        if return_type is np.ndarray:
+            points_t = to_numpy(points_t)
+            if filter_offgrid and return_filtered:
+                indices = to_numpy(indices)
+
+        # Format returned values.
+        results = points_t
+        if filter_offgrid and return_filtered:
+            results = [points_t, indices]
+
+        return results
 
 class RandomPad(RandomGridTransform):
     @alias_kwargs([

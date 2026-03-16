@@ -9,16 +9,20 @@ from ...utils.matrix import affine_origin, affine_spacing, create_affine
 from ..identity import Identity
 from .spatial import RandomSpatialTransform, SpatialTransform
 
+BATCHING_MEM_P = 0.5
+
 # Defines a coarse grid of control points.
 # Random displacements are assigned at each control point.
 class Elastic(SpatialTransform):
     def __init__(
         self,
+        batching_mem_p: float = BATCHING_MEM_P,
         control_spacing: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 50.0,
         control_origin: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
         displacement: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
         method: Literal['bspline', 'cubic', 'linear'] = 'bspline',
         seed: int = 42,
+        use_batching: bool = True,
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
@@ -33,15 +37,19 @@ class Elastic(SpatialTransform):
         assert len(disp_range) == 2 * self._dim, f"Expected 'displacement' of length {2 * self._dim}, got {len(disp_range)}."
         self.__disp_range = to_tensor(disp_range).reshape(self._dim, 2)
         self.__seed = seed
+        self.__use_batching = use_batching
+        self.__batching_mem_p = batching_mem_p
         self.__warn_folding()
         self._params = dict(
             type=self.__class__.__name__,
+            batching_mem_p=self.__batching_mem_p,
             control_origin=self.__control_origin,
             control_spacing=self.__control_spacing,
             dim=self._dim,
             displacement=self.__disp_range,
             method=self.__method,
             seed=self.__seed,
+            use_batching=self.__use_batching,
         )
 
     def __warn_folding(self, control_spacing: torch.Tensor | None = None) -> None:
@@ -53,32 +61,72 @@ class Elastic(SpatialTransform):
                 f"control spacings ({to_tuple(control_spacing)}) may produce folding transforms. Such transforms may "
                 f"be non-invertible and could raise errors when performing forward points transform.")
 
+    def __estimate_bytes_per_point(self) -> int:
+        """Estimate peak GPU bytes per point for the interpolation hot loop."""
+        n = 4 if self.__method in ('cubic', 'bspline') else 2
+        d = self._dim
+        n_d = n ** d
+        # Key per-point tensors alive simultaneously (float32=4 bytes, int32=4 bytes):
+        # corners (int32): n^d * d * 4
+        # corner_disps (float32): n^d * d * 4
+        # V (float32): n^d * d * 4 (same memory as corner_disps after reshape, but separate during einsum)
+        # b (float32): n * d * 4
+        # corner_min, t, points_norm slices, disps, points_t: ~5 * d * 4
+        return (3 * n_d * d + n * d + 5 * d) * 4
+
+    def __get_n_batches(
+        self,
+        n_points: int,
+        device: torch.device,
+        ) -> int:
+        if device.type == 'cuda':
+            mem_total = torch.cuda.get_device_properties(device).total_memory
+            if self._debug:
+                print(f"Total GPU memory: {mem_total / (1024 ** 3):.2f} GB")
+            mem_budget = int(mem_total * self.__batching_mem_p)
+            if self._debug:
+                print(f"Allowing up to {mem_budget / (1024 ** 3):.2f} GB before applying batching.")
+            bpp = self.__estimate_bytes_per_point()
+            points_per_batch = max(budget // bpp, 1)
+            n_batches = max((n_points + points_per_batch - 1) // points_per_batch, 1)
+        else:
+            n_batches = 1
+
+        return n_batches
+
     def backward_transform_points(
         self,
         points: PointsTensor,
         **kwargs,
         ) -> PointsTensor:
+        if self._debug:
+            print('Elastic.backward_transform_points')
+        # Get the control grid - will be large enough to cover all points.
         cp_disps, cp_affine = self.control_grid(points)
         cp_spacing = affine_spacing(cp_affine)
         cp_origin = affine_origin(cp_affine)
         cp_disps = torch.moveaxis(cp_disps, 0, -1)  # Move channels dim to back.
+        if self._debug:
+            print('cp_disps: ', cp_disps.shape)
 
         # Normalise points to the control grid integer coords.
         points_norm = (points - cp_origin) / cp_spacing
+        if self._debug:
+            print('points_norm: ', points_norm.shape)
 
-        # Floor index: leftmost stencil point for linear, second stencil point for cubic.
-        floor_idx = torch.stack([torch.searchsorted(torch.arange(cp_disps.shape[a]).to(points.device), points_norm[:, a]) - 1 for a in range(self._dim)], dim=-1)
+        # Get lowest corner point.
+        corner_min = points_norm.floor().type(torch.int32)
+        if self._debug:
+            print('corner_min: ', corner_min.shape)
 
-        # Fractional position within the cell [0, 1).
-        t = points_norm - floor_idx
+        # Get distances from corner.
+        t = points_norm - corner_min
 
-        # Compute basis weights and stencil offsets per method.
+        # Compute basis by method.
         if self.__method == 'linear':
-            # Linear basis (C0, interpolating). 2 weights, offsets {0, 1}.
             b = torch.stack([1 - t, t], dim=-2)
-            stencil_range = torch.tensor([0, 1])
+            corner_range = to_tensor([0, 1])
         else:
-            # Cubic methods. 4 weights, offsets {-1, 0, 1, 2}.
             t2 = t * t
             t3 = t2 * t
             if self.__method == 'cubic':
@@ -95,45 +143,86 @@ class Elastic(SpatialTransform):
                 w2 = (-3.0 * t3 + 3.0 * t2 + 3.0 * t + 1.0) / 6.0
                 w3 = t3 / 6.0
             b = torch.stack([w0, w1, w2, w3], dim=-2)
-            stencil_range = torch.tensor([-1, 0, 1, 2])
+            corner_range = to_tensor([-1, 0, 1, 2])
+        if self._debug:
+            print('b: ', b.shape)
+            print('corner_range: ', corner_range)
 
-        n = len(stencil_range)
-
-        # Build the n^dim stencil offsets.
-        offsets = torch.stack(torch.meshgrid([stencil_range] * self._dim, indexing='ij'), dim=-1)
+        # Get corner point offsets (small, independent of N).
+        offsets = torch.stack(torch.meshgrid([corner_range] * self._dim, indexing='ij'), dim=-1)
         offsets = offsets.reshape(-1, self._dim).to(points.device)
+        if self._debug:
+            print('offsets: ', offsets.shape)
 
-        # Gather stencil indices for each point.
-        corners = floor_idx[:, None, :] + offsets[None, :, :]
+        # Get the number of batches required to process points on GPU only.
+        if self.__use_batching:
+            n_points = points.shape[0]
+            n_batches = self.__get_n_batches(n_points, points.device)
+            if self._debug and n_batches == 1:
+                print("Batching not required.")
 
-        # Index into the displacement grid.
-        idxs = corners.unbind(-1)
-        corner_disps = cp_disps[*idxs]
+        if self.__use_batching and n_batches > 1:
+            disps = torch.empty_like(points)
+            batch_indices = torch.linspace(0, n_points, n_batches + 1, dtype=torch.long)
 
-        # Reshape to (N, n, n, [n,] dim) for einsum.
-        V = corner_disps.reshape(-1, *(n, ) * self._dim, self._dim)
+            # Process batches.
+            for i in range(n_batches):
+                if self._debug:
+                    print(f"Points batch {i + 1}/{n_batches}")
+                start, end = batch_indices[i].item(), batch_indices[i + 1].item()
+                corner_min_batch = corner_min[start:end]
+                b_batch = b[start:end]
+                if self._debug:
+                    print('corner_min_batch: ', corner_min_batch.shape)
+                    print('b_batch: ', b_batch.shape)
 
-        # Tensor-product interpolation via einsum.
-        if self._dim == 2:
-            disps = torch.einsum('ni,nj,nijd->nd', b[:, :, 0], b[:, :, 1], V)
-        elif self._dim == 3:
-            disps = torch.einsum('ni,nj,nk,nijkd->nd', b[:, :, 0], b[:, :, 1], b[:, :, 2], V)
+                # Calculate corners for each point.
+                corners_batch = corner_min_batch[:, None, :] + offsets[None, :, :]
+                if self._debug:
+                    print('corners_batch: ', corners_batch.shape)
 
-        # Get displaced input points.
-        points_t = points + disps
+                # Split into x/y/z indices to perform control point disp selection.
+                idxs = corners_batch.unbind(-1)
+                corner_disps_batch = cp_disps[tuple(idxs)]
+                if self._debug:
+                    print('corner_disps_batch: ', corner_disps_batch.shape)
 
-        return points_t
+                # Reshape for einsum.
+                V_batch = corner_disps_batch.reshape(-1, *(len(corner_range), ) * self._dim, self._dim)
+                if self._debug:
+                    print('V_batch: ', V_batch.shape)
 
-    def __backward_transform_points_linear_gs(
-        self,
-        points: PointsTensor,
-        ) -> PointsTensor:
-        # Get control grid.
-        cp_disps, cp_affine = self.control_grid(points)
+                # Tensor-product interpolation via einsum.
+                # Contract one axis at a time (separable) to reduce cost from O(n^d) to O(n*d).
+                for a in range(self._dim):
+                    V_batch = torch.einsum('ni,ni...d->n...d', b_batch[:, :, a], V_batch)
 
-        # Interpolate the displacement grid.
-        disps = grid_sample(cp_disps, cp_affine, points, dim=self._dim)
-        disps = torch.moveaxis(disps, 0, -1)[0, 0]    # Disps come back from 'grid_sample' as 3-channel image.
+                disps[start:end] = V_batch
+
+                # Free batch intermediates.
+                del corner_min_batch, b_batch, corners_batch, idxs, corner_disps_batch, V_batch
+        else:
+            # Calculate corners for each point.
+            corners = corner_min[:, None, :] + offsets[None, :, :]
+            if self._debug:
+                print('corners: ', corners.shape)
+
+            # Split into x/y/z indices to perform control point disp selection.
+            idxs = corners.unbind(-1)
+            corner_disps = cp_disps[tuple(idxs)]
+            if self._debug:
+                print('corner_disps: ', corner_disps.shape)
+
+            # Reshape for einsum.
+            V = corner_disps.reshape(-1, *(len(corner_range), ) * self._dim, self._dim)
+            if self._debug:
+                print('V: ', V.shape)
+
+            # Tensor-product interpolation via einsum.
+            # Contract one axis at a time (separable) to reduce cost from O(n^d) to O(n*d).
+            for a in range(self._dim):
+                V = torch.einsum('ni,ni...d->n...d', b[:, :, a], V)
+            disps = V
 
         # Get displaced input points.
         points_t = points + disps
@@ -144,6 +233,7 @@ class Elastic(SpatialTransform):
     # Reinterprets float32 coords as int32 bit patterns for hashing — deterministic
     # as long as the same arithmetic path produces the coordinates.
     # Returns draws in [0, 1) of shape (N, dim).
+    # Comp
     def __control_grid_draws(
         self,
         points: PointsTensor,
@@ -208,7 +298,7 @@ class Elastic(SpatialTransform):
 
         # Bring channels to the front.
         cp_disps = torch.moveaxis(cp_disps, -1, 0)
-        cp_affine = create_affine(cp_spacing, cp_origin)
+        cp_affine = create_affine(cp_spacing, cp_origin, device=points.device, dtype=points.dtype)
         
         return cp_disps, cp_affine
 
@@ -217,40 +307,46 @@ class Elastic(SpatialTransform):
             control_origin=to_tuple(self.__control_origin, decimals=3),
             control_spacing=to_tuple(self.__control_spacing, decimals=3),
             displacement=to_tuple(self.__disp_range.flatten(), decimals=3),
+            method=self.__method,
+            seed=self.__seed,
         )
         return super().__str__(self.__class__.__name__, params)
 
     def transform_points(
         self,
         points: Points,
+        affine: Affine | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
+        n_iter_max: int = int(1e3),
         filter_offgrid: bool = True,
-        grid: SamplingGrid | None = None,   # Required for 'image-centre' rotation/scale.
+        # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
+        size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
         ) -> Points | List[Points | np.ndarray | torch.Tensor]:
-        points, return_type = to_tensor(points, return_type=True)
+        points, return_type = to_tensor(points, device=self._device, dtype=torch.float32, return_type=True)
+        size = to_tensor(size, device=points.device, dtype=points.dtype)
+        affine = to_tensor(affine, device=points.device, dtype=points.dtype)
 
-        # Define the backward transform.
-
-        # Let: y = x + b(x) be the location of the back-transformed point x.  
-        # Let: F(x) = x + b(x) - y, and solve for F(x) = 0 (using Newton-Rahpson) to find x for a given y.
-        n_iter = 100     # Log the required number of iterations for solve and adjust.
-        x_i = points.clone().requires_grad_()
-        b = self.backward_transform_points
-        for i in range(n_iter):
+        # Method:
+        # - Let: y = x + b(x) be the location of the back-transformed point x.  
+        # - Let: F(x) = x + b(x) - y
+        # - Solve F(x) = 0, for x (using Newton-Raphson).
+        x_i = points.clone().requires_grad_()   # Use y as initial guess for x.
+        b = self.backward_transform_points      # Gives x + b(x).
+        for i in range(n_iter_max):
             # Perform transform.
-            y_i = x_i + b(x_i)
+            y_i = b(x_i)
 
             # Check convergence.
             if torch.isclose(y_i, points).all():
                 break
-            elif i == n_iter - 1:
-                raise ValueError('No convergence after max iterations: ', i)
+            elif i == n_iter_max - 1:
+                raise ValueError(f"Elastic transform failed to converge after {n_iter_max} iterations.")
 
             # Get Jacobians for batch of points.
             grads = []
             for a in range(self._dim):
-                grad_a, = torch.autograd.grad(y_i[:, a], x_i, grad_outputs=torch.ones(len(x_i)).to(x_i.device), retain_graph=True)
+                grad_a, = torch.autograd.grad(y_i[:, a], x_i, grad_outputs=torch.ones(len(x_i)).to(points.device), retain_graph=True)
                 grads.append(grad_a)
             J = torch.stack(grads, dim=1)
 
@@ -262,17 +358,14 @@ class Elastic(SpatialTransform):
             x_i = x_i.detach()  # How does it get 'requires_grad_' again, must be through 'dx'.
             x_i = x_i - dx
 
-        x_i = x_i.detach()
+        logger.info(f"Elastic transform points converged after {i} iterations.")
+        points_t = x_i.detach()
 
         # Forward transformed points could end up off-screen and should be filtered.
         # However, we need to know which points are returned for loss calc for example.
-        points_t = x_i
         if filter_offgrid:
-            size, affine = grid if grid is not None else (None, None)
-            assert size is not None
-            assert affine is not None
-            size = to_tensor(size, device=points.device, dtype=points.dtype)
-            affine = to_tensor(affine, device=points.device, dtype=points.dtype)
+            assert size is not None, "Size must be provided for filtering off-grid points."
+            assert affine is not None, "Affine must be provided for filtering off-grid points."
             fov = torch.stack([affine[:3, 3], affine[:3, 3] + size * affine[:3, :3].diag()]).to(points.device)
             to_keep = (points_t >= fov[0]) & (points_t < fov[1])
             to_keep = to_keep.all(axis=1)
@@ -282,17 +375,20 @@ class Elastic(SpatialTransform):
         # Convert return types.
         if return_type is np.ndarray:
             points_t = to_numpy(points_t)
-            indices = to_numpy(indices) if filter_offgrid else None
+            if filter_offgrid and return_filtered:
+                indices = to_numpy(indices)
 
         # Format returned values.
         results = points_t
         if filter_offgrid and return_filtered:
             results = [points_t, indices]
+
         return results
 
 class RandomElastic(RandomSpatialTransform):
     def __init__(
         self, 
+        batching_mem_p: float = BATCHING_MEM_P,
         control_spacing: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 50.0,
         control_origin: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
         displacement: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
@@ -311,8 +407,10 @@ class RandomElastic(RandomSpatialTransform):
         disp_range = expand_range_arg(displacement, dim=self._dim, negate_lower=True)
         assert len(disp_range) == 2 * self._dim, f"Expected 'displacement' of length {2 * self._dim}, got {len(disp_range)}."
         self.__disp_range = to_tensor(disp_range).reshape(self._dim, 2)
+        self.__batching_mem_p = batching_mem_p
         self._params = dict(
             type=self.__class__.__name__,
+            batching_mem_p=self.__batching_mem_p,
             control_origin=self.__control_origin_range,
             control_spacing=self.__control_spacing_range,
             dim=self._dim,
@@ -344,18 +442,22 @@ class RandomElastic(RandomSpatialTransform):
         seed_draw = self._rng.integers(1e9)   # Requires upper bound.
         self.__warn_folding(control_spacing_draw)
         params = dict(
+            batching_mem_p=self.__batching_mem_p,
             control_origin=control_origin_draw,
             control_spacing=control_spacing_draw,
             displacement=self.__disp_range.flatten(),
             method=self.__method,
             seed=seed_draw,
+            use_batching=self.__use_batching,
         )
         return super().freeze(Elastic, params)
 
     def __str__(self) -> str:
         params = dict(
+            batching_mem_p=self.__batching_mem_p,
             control_origin=to_tuple(self.__control_origin_range.flatten(), decimals=3),
             control_spacing=to_tuple(self.__control_spacing_range.flatten(), decimals=3),
             displacement=to_tuple(self.__disp_range.flatten(), decimals=3),
+            use_batching=self.__use_batching,
         )
         return super().__str__(self.__class__.__name__, params)

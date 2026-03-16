@@ -5,6 +5,18 @@ from typing import *
 
 from ..typing import *
 
+def load_numpy(
+    filepath: str,
+    keys: str | List[str] = 'data',
+    ) -> Image | List[Image]:
+    assert filepath.endswith('.npy') or filepath.endswith('.npz'), "Filepath must end with .npy or .npz"
+    data = np.load(filepath)
+    if filepath.endswith('.npz'):
+        keys = arg_to_list(keys, str)
+        data = [data[k] for k in keys]
+        data = data[0] if len(data) == 1 else data
+    return data
+
 # JSON/YAML don't know how to serialize tensors, so we need to convert them to lists first.
 def make_serialisable(
     param: Any,
