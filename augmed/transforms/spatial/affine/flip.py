@@ -34,11 +34,11 @@ class Flip(Affine):
             **kwargs,
         )
         self._params = dict(
-            type=self.__class__.__name__,
             backward_matrix=self._backward_scaling_matrix,
             dim=self._dim,
             flips=self.__flips,
             matrix=self._scaling_matrix,
+            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:
@@ -59,10 +59,10 @@ class RandomFlip(RandomSpatialTransform):
         assert len(p_flip) == self._dim, f"Expected 'p_flip' of length {self._dim} for dim={self._dim}, got {len(p_flip)}."
         self.__p_flip = to_tensor(p_flip)
         self._params = dict(
-            type=self.__class__.__name__,
             dim=self._dim,
             p=self._p,
             p_flip=self.__p_flip,
+            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'Flip':

@@ -1,7 +1,9 @@
 from typing import *
 
 from ...typing import *
-from ...utils import *
+from ...utils.args import alias_kwargs, arg_to_list
+from ...utils.conversion import to_return_format, to_tensor
+from ...utils.misc import get_group_device
 from ..transform import RandomTransform, Transform
 
 # These transforms change the position of the sampling grid.
@@ -30,30 +32,28 @@ class GridTransform(Transform):
         return_affine: bool = False,
         ) -> Image | List[Image | Affine]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
-        return_types = ['numpy' if isinstance(i, np.ndarray) else 'torch' for i in images]
-        images = [to_tensor(i, device=self._device) for i in images]
-        dims = [len(i.shape) for i in images]
-        if self._dim == 2:
-            for i, d in enumerate(dims):
-                assert d in [2, 3, 4], f"Expected 2-4D image (2D spatial, optional batch/channel), got {d}D for image {i}."
-        elif self._dim == 3:
-            for i, d in enumerate(dims):
-                assert d in [3, 4, 5], f"Expected 3-5D image (3D spatial, optional batch/channel), got {d}D for image {i}."
-        size = to_tensor(images[0].shape[-self._dim:], device=images[0].device, dtype=torch.int32)
-        for i, img in enumerate(images[1:], 1):
+        device = get_group_device(images, device=self._device)
+        return_types = [type(i) for i in images]
+        images = [to_tensor(i, device=device) for i in images]
+        size = to_tensor(images[0].shape[-self._dim:], device=device, dtype=torch.int32)
+        affine = to_tensor(affine, device=device, dtype=torch.float32)
+
+        # Check image n_dims, and spatial sizes.
+        for i, img in enumerate(images):
+            n_dims = len(img.shape)
+            possible_dims = list(range(self._dim, self._dim + 3))   # E.g. for 3D, possible dims are 3-5 (3D spatial, optional batch/channel).
+            assert n_dims in possible_dims, f"Expected {self._dim}-{self._dim + 2}D image ({self._dim}D spatial, optional batch/channel), got {n_dims}D for image {i}."
             assert img.shape[-self._dim:] == images[0].shape[-self._dim:], f"All images must have the same spatial size. Expected {tuple(images[0].shape[-self._dim:])}, got {tuple(img.shape[-self._dim:])} for image {i}."
-        affine = to_tensor(affine, device=self._device, dtype=torch.float32)
 
         # Get new FOV (shared across all images).
         grid_t = self.transform_grid((size, affine))
 
         # Get resample points.
         points = grid_points(*grid_t)
-        points_t = to_tensor(points, device=self._device)
 
         # Reshape to image size.
         size_t, _, _ = grid_t
-        points_t = points_t.reshape(*to_tuple(size_t), self._dim)
+        points = points.reshape(*to_tuple(size_t), self._dim)
 
         # The output affine comes from the transformed grid.
         _, affine_out = grid_t
@@ -62,20 +62,14 @@ class GridTransform(Transform):
         image_ts = []
         for image, rt in zip(images, return_types):
             # Perform resample.
-            image_t = grid_sample(image, a, points_t.to(image.device))
-
-            # Convert to return types.
-            if rt == 'numpy': 
-                image_t = to_numpy(image_t)
+            image_t = grid_sample(image, a, points)
             image_ts.append(image_t)
 
-        results = image_ts[0] if image_was_single else image_ts
+        # Convert to return format.
+        other_data = []
         if return_affine:
-            out = to_numpy(affine_out) if return_types[0] == 'numpy' else affine_out
-            if isinstance(results, list):
-                results.append(out)
-            else:
-                results = [results, out]
+            other_data.append(affine_out)
+        results = to_return_format(image_ts, other_data=other_data, return_single=image_was_single, return_types=return_types)
 
         return results
 

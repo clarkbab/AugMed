@@ -28,11 +28,11 @@ class RandomThreshold(RandomIntensityTransform):
         if self.__max_range is not None:
             assert len(self.__max_range) == 2, f"Expected 'max' of length 2, got {len(self.__max_range)}."
         self._params = dict(
-            type=self.__class__.__name__,
             dim=self._dim,
             max=self.__max_range,
             min=self.__min_range,
             p=self._p,
+            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'Norm':
@@ -43,15 +43,15 @@ class RandomThreshold(RandomIntensityTransform):
         min_draw = draw[0] * (self.__min_range[1] - self.__min_range[0]) + self.__min_range[0] if self.__min_range is not None else None
         max_draw = draw[0] * (self.__max_range[1] - self.__max_range[0]) + self.__max_range[0] if self.__max_range is not None else None
         params = dict(
-            min=min_draw,
             max=max_draw,
+            min=min_draw,
         )
         return super().freeze(Threshold, params)
 
     def __str__(self) -> str:
         params = dict(
-            min=to_tuple(self.__min_range, decimals=3) if self.__min_range is not None else None,
             max=to_tuple(self.__max_range, decimals=3) if self.__max_range is not None else None,
+            min=to_tuple(self.__min_range, decimals=3) if self.__min_range is not None else None,
         )
         return super().__str__(self.__class__.__name__, params)
 
@@ -66,16 +66,16 @@ class Threshold(IntensityTransform):
         self.__min = min
         self.__max = max
         self._params = dict(
-            type=self.__class__.__name__,
             dim=self._dim,
             max=self.__max,
             min=self.__min,
+            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:
         params = dict(
-            min=round(self.__min, 3) if self.__min is not None else None,
             max=round(self.__max, 3) if self.__max is not None else None,
+            min=round(self.__min, 3) if self.__min is not None else None,
         )
         return super().__str__(self.__class__.__name__, params)
 
@@ -85,15 +85,9 @@ class Threshold(IntensityTransform):
         ) -> ImageTensor:
         if image.dtype == torch.bool:
             return image    # Boolean tensors are unchanged by intensity transforms. 
-        print('thresholding')
-        print(image.shape)
-        print(self.__min, self.__max)
-        print(image.min(), image.max())
         image_t = image.clone()
         if self.__min is not None:
             image_t[image_t < self.__min] = self.__min
         if self.__max is not None:
             image_t[image_t > self.__max] = self.__max
-        print(image_t.min(), image_t.max())
-        print(image_t.shape)
         return image_t

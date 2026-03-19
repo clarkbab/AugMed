@@ -21,13 +21,13 @@ class Rotate(Affine):
             **kwargs,
         )
         self._params = dict(
-            type=self.__class__.__name__,
             backward_matrix=self._backward_rotation_matrix,
             dim=self._dim,
             matrix=self._rotation_matrix,
             rotation=self._rotation,
             rotation_centre=self._rotation_centre,
             rotation_rad=self._rotation_rad,
+            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:
@@ -51,13 +51,12 @@ class RandomRotate(RandomAffine):
             translation=None,
             **kwargs,
         )
-        print('init random rotate transform')
         self._params = dict(
-            type=self.__class__.__name__,
             dim=self._dim,
             p=self._p,
             rotation=self._rotation_range,
             rotation_centre=self._rotation_centre,
+            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'Rotate':

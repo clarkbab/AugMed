@@ -76,7 +76,7 @@ def grid_sample(
     # Resample image.
     image_t = torch.nn.functional.grid_sample(image, points, align_corners=True, mode=mode, padding_mode=padding_mode, **kwargs)
 
-    # Convert to return types.
+    # Convert to return format.
     if return_dtype is not torch.float32:
         image_t = image_t.type(return_dtype)
 
@@ -97,12 +97,12 @@ def grid_points(
     # Get grid points.
     dim = len(size)
     grids = torch.meshgrid([torch.arange(s.item()) for s in size], indexing='ij')
-    points_vox = torch.stack(grids, dim=-1).reshape(-1, dim).to(size.device)
-    if affine is None:
-        affine = create_eye(dim, device=size.device, dtype=torch.float32)
-    spacing = affine_spacing(affine)
-    origin = affine_origin(affine)
-    points = points_vox * spacing + origin
+    points = torch.stack(grids, dim=-1).reshape(-1, dim).to(size.device)
+    # Convert from voxel to world coords if affine is provided.
+    if affine is not None:
+        origin = affine_origin(affine)
+        spacing = affine_spacing(affine)
+        points = points * spacing + origin
 
     # Create superset.
     if return_superset:

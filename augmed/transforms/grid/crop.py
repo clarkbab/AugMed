@@ -74,13 +74,13 @@ class RandomCrop(RandomGridTransform):
             self.__crop_remove = None
 
         self._params = dict(
-            type=self.__class__.__name__,
             crop_centre=self.__crop_centre,
             crop_centre_offset=self.__crop_centre_offset,
             crop_margin_range=self.__crop_margin,
             crop_remove=self.__crop_remove,
             dim=self._dim,
             p=self._p,
+            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'Crop':
@@ -155,20 +155,20 @@ class Crop(GridTransform):
             self.__crop_remove = None
 
         self._params = dict(
-            type=self.__class__.__name__,
             crop_centre=self.__crop_centre,
             crop_centre_offset=self.__crop_centre_offset,
             crop_margin=self.__crop_margin,
             crop_remove=self.__crop_remove,
             dim=self._dim,
+            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:
         params = dict(
             crop_centre=to_tuple(self.__crop_centre, decimals=3),
             crop_centre_offset=to_tuple(self.__crop_centre_offset.flatten(), decimals=3) if self.__crop_centre_offset is not None else None,
-            crop_remove=to_tuple(self.__crop_remove.flatten(), decimals=3) if self.__crop_remove is not None else None,
             crop_margin=to_tuple(self.__crop_margin.flatten(), decimals=3) if self.__crop_margin is not None else None,
+            crop_remove=to_tuple(self.__crop_remove.flatten(), decimals=3) if self.__crop_remove is not None else None,
         )
         return super().__str__(self.__class__.__name__, params)
 
@@ -177,7 +177,6 @@ class Crop(GridTransform):
         grid: SamplingGridTensor,
         **kwargs,
         ) -> SamplingGridTensor:
-        print('crop transform grid')
         size, affine = grid
         if self.__crop_remove is not None:
             # Get the current FOV.
@@ -246,7 +245,7 @@ class Crop(GridTransform):
             spacing_t = affine_spacing(affine)
             origin = affine_origin(affine)
             origin_t = (crop_min_vox * spacing) + origin
-            affine_t = create_affine(spacing_t, origin_t)
+            affine_t = create_affine(spacing_t, origin_t, device=size.device)
         else:
             affine_t = None
 
@@ -257,48 +256,54 @@ class Crop(GridTransform):
 
     def transform_points(
         self,
-        points: Points,
+        points: Points | List[Points],
         affine: Affine | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool = True,
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
-        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
-        points, return_type = to_tensor(points, device=self._device, dtype=torch.float32, return_type=True)
-        size = to_tensor(size, device=points.device, dtype=points.dtype)
-        affine = to_tensor(affine, device=points.device, dtype=points.dtype)
+        ) -> Points | List[Points | Indices | List[Indices]]:
+        pointses, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_expanded=True)
+        device = get_group_device(pointses, device=self._device)
+        return_types = [type(p) for p in pointses]
+        pointses = [to_tensor(p, device=device, dtype=torch.float32) for p in pointses]
+        size = to_tensor(size, device=device, dtype=torch.int32)
+        affine = to_tensor(affine, device=device, dtype=torch.float32)
 
-        # Forward transformed points could end up off-screen and should be filtered.
-        # However, we need to know which points are returned for loss calc for example.
-        if filter_offgrid:
-            # Get new FOV.
-            assert size is not None, "Size must be provided for filtering off-grid points."
-            assert affine is not None, "Affine must be provided for filtering off-grid points."
-            size_t, affine_t = self.transform_grid((size, affine))
-            spacing_t = affine_spacing(affine_t)
-            origin_t = affine_origin(affine_t)
+        points_ts = []
+        indiceses = []
+        for p in pointses:
+            points_t = p
 
-            # Get crop box.
-            crop_min_mm = origin_t
-            crop_max_mm = origin_t + size_t * spacing_t
+            # Forward transformed points could end up off-screen and should be filtered.
+            # However, we need to know which points are returned for loss calc for example.
+            if filter_offgrid:
+                # Get new FOV.
+                assert size is not None, "Size must be provided for filtering off-grid points."
+                assert affine is not None, "Affine must be provided for filtering off-grid points."
+                size_t, affine_t = self.transform_grid((size, affine))
+                spacing_t = affine_spacing(affine_t)
+                origin_t = affine_origin(affine_t)
 
-            # Crop points.
-            crop_mm = torch.stack([crop_min_mm, crop_max_mm]).to(points.device)
-            to_keep = (points >= crop_mm[0]) & (points < crop_mm[1])
-            to_keep = to_keep.all(axis=1)
-            points_t = points[to_keep]
-            indices = torch.where(to_keep)[0]
+                # Get crop box.
+                crop_min_mm = origin_t
+                crop_max_mm = origin_t + size_t * spacing_t
 
-        # Convert return types.
-        if return_type is np.ndarray:
-            points_t = to_numpy(points_t)
-            if filter_offgrid and return_filtered:
-                indices = to_numpy(indices)
+                # Crop points.
+                crop_mm = torch.stack([crop_min_mm, crop_max_mm]).to(device)
+                to_keep = (points >= crop_mm[0]) & (points < crop_mm[1])
+                to_keep = to_keep.all(axis=1)
+                points_t = points_t[to_keep]
+                indices = torch.where(~to_keep)[0].type(torch.int32)
+                indiceses.append(indices)
 
-        # Format returned values.
-        results = points_t
+            points_ts.append(points_t)
+
+        # Convert to return format.
+        other_data = []
         if filter_offgrid and return_filtered:
-            results = [points_t, indices]
-
+            indiceses = to_return_format(indiceses, return_single=True, return_types=return_types)
+            other_data.append(indiceses)
+        results = to_return_format(points_ts, other_data=other_data, return_single=points_was_single, return_types=return_types)
         return results

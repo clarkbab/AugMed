@@ -10,8 +10,8 @@ class ForceResample(IntensityTransform):
         **kwargs) -> None:
         super().__init__(**kwargs)
         self._params = dict(
-            type=self.__class__.__name__,
             dim=self._dim,
+            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:

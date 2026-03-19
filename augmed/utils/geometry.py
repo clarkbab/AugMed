@@ -81,7 +81,7 @@ def fov(
     # Get fov in voxels.
     n_dims = len(size)
     fov_vox = torch.stack([
-        torch.zeros(n_dims, dtype=torch.int32, device=size.device),
+        torch.zeros(n_dims, device=size.device, dtype=torch.int32),
         torch.tensor(size),
     ])
     if affine is None:

@@ -28,10 +28,10 @@ class Resize(GridTransform):
         self.__size = to_tensor(size, broadcast=self._dim, dtype=torch.int32) if size is not None else None
         self.__spacing = to_tensor(spacing, broadcast=self._dim) if spacing is not None else None
         self._params = dict(
-            type=self.__class__.__name__,
             dim=self._dim,
             size=self.__size,
             spacing=self.__spacing,
+            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:
@@ -61,7 +61,7 @@ class Resize(GridTransform):
                 origin_t = affine_origin(affine)
 
         if affine is not None:
-            affine_t = create_affine(spacing_t, origin_t)
+            affine_t = create_affine(spacing_t, origin_t, device=size.device)
         else:
             affine_t = None
 
@@ -92,11 +92,11 @@ class RandomResize(RandomGridTransform):
             self.__size = None
 
         self._params = dict(
-            type=self.__class__.__name__,
             dim=self._dim,
             p=self._p,
             size=self.__size,
             spacing=self.__spacing,
+            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'Resize':

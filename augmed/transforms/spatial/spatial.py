@@ -2,9 +2,10 @@ from typing import *
 
 from ...typing import *
 from ...utils.args import alias_kwargs, arg_to_list
-from ...utils.conversion import to_numpy, to_tensor, to_tuple
+from ...utils.conversion import to_numpy, to_return_format, to_tensor, to_tuple
 from ...utils.grid import grid_points, grid_sample
 from ...utils.matrix import create_affine
+from ...utils.misc import get_group_device
 from ..transform import RandomTransform, Transform
 
 # These transforms move objects around in the world.
@@ -32,30 +33,24 @@ class SpatialTransform(Transform):
         return_affine: bool = False,
         ) -> Image | List[Image | Affine]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
-        return_types = ['numpy' if isinstance(i, np.ndarray) else 'torch' for i in images]
-        images = [to_tensor(i, self._device) for i in images]
-        dims = [len(i.shape) for i in images]
-        if self._dim == 2:
-            for i, d in enumerate(dims):
-                assert d in [2, 3, 4], f"Expected 2-4D image (2D spatial, optional batch/channel), got {d}D for image {i}."
-        elif self._dim == 3:
-            for i, d in enumerate(dims):
-                assert d in [3, 4, 5], f"Expected 3-5D image (3D spatial, optional batch/channel), got {d}D for image {i}."
-        size = to_tensor(images[0].shape[-self._dim:], device=images[0].device, dtype=torch.int32)
-        for i, img in enumerate(images[1:], 1):
+        device = get_group_device(images, device=self._device)
+        return_types = [type(i) for i in images]
+        images = [to_tensor(i, device=device) for i in images]
+        size = to_tensor(images[0].shape[-self._dim:], device=device, dtype=torch.int32)
+        affine = to_tensor(affine, device=device, dtype=torch.float32)
+
+        # Check image n_dims, and spatial sizes.
+        for i, img in enumerate(images):
+            n_dims = len(img.shape)
+            possible_dims = list(range(self._dim, self._dim + 3))   # E.g. for 3D, possible dims are 3-5 (3D spatial, optional batch/channel).
+            assert n_dims in possible_dims, f"Expected {self._dim}-{self._dim + 2}D image ({self._dim}D spatial, optional batch/channel), got {n_dims}D for image {i}."
             assert img.shape[-self._dim:] == images[0].shape[-self._dim:], f"All images must have the same spatial size. Expected {tuple(images[0].shape[-self._dim:])}, got {tuple(img.shape[-self._dim:])} for image {i}."
-        affine_t = to_tensor(affine, device=self._device, dtype=torch.float32) if affine is not None else create_affine(spacing=(1,) * self._dim, origin=(0,) * self._dim, device=self._device, return_type='torch')
 
         # Get back transformed image points (shared across all images).
-        points = grid_points(images[0].shape, origin=(0,) * self._dim, spacing=(1,) * self._dim)
-        points = to_tensor(points, device=self._device)
+        points = grid_points(size, origin=(0,) * self._dim, spacing=(1,) * self._dim)
 
         # Perform back transform of resampling points.
-        okwargs = dict(
-            size=size,
-            affine=affine_t,
-        )
-        points_t = self.backward_transform_points(points, **okwargs)
+        points_t = self.backward_transform_points(points, grid=(size, affine))
 
         # Reshape to image size.
         points_t = points_t.reshape(*to_tuple(size), self._dim)
@@ -64,24 +59,14 @@ class SpatialTransform(Transform):
         image_ts = []
         for i, rt in zip(images, return_types):
             # Perform resample.
-            image_t = grid_sample(i, affine_t, points_t.to(i.device))
-
-            # Convert to return types.
-            if rt == 'numpy': 
-                image_t = to_numpy(image_t)
-                if return_affine:
-                    affine_out = to_numpy(affine_t)
-            else:
-                if return_affine:
-                    affine_out = affine_t
+            image_t = grid_sample(i, affine_t, points_t)
             image_ts.append(image_t)
 
-        results = image_ts[0] if image_was_single else image_ts
+        # Convert to return format.
+        other_data = []
         if return_affine:
-            if isinstance(results, list):
-                results.append(affine_out)
-            else:
-                results = [results, affine_out]
+            other_data.append(affine_out)
+        results = to_return_format(image_ts, other_data=other_data, return_single=image_was_single, return_types=return_types)
 
         return results
 

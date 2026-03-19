@@ -2,7 +2,8 @@ from typing import *
 
 from ..typing import *
 from ..utils.args import arg_to_list
-from ..utils.conversion import to_tensor
+from ..utils.conversion import to_return_format, to_tensor
+from ..utils.misc import get_group_device
 from .transform import Transform
 
 class Identity(Transform):
@@ -15,44 +16,31 @@ class Identity(Transform):
         affine: Affine | None = None,
         return_affine: bool = False,
         ) -> Image | List[Image | Affine]:
-        images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
-        size = images[0].shape[-self._dim:]
-        for i, img in enumerate(images[1:], 1):
-            assert img.shape[-self._dim:] == size, f"All images must have the same spatial size. Expected {size}, got {img.shape[-self._dim:]} for image {i}."
-
-        image_ts = images
-        results = image_ts[0] if image_was_single else image_ts
+        # Add affine to appease the API.
+        other_data = []
         if return_affine:
-            if isinstance(results, list):
-                results.append(affine)
-            else:
-                results = [results, affine]
+            other_data.append(affine)
+        results = to_return_format(image, other_data=other_data)
 
         return results
 
     # When a transform has a '_device' all input data will be moved to (and returned on) that device
     def transform_points(
         self,
-        points: Points,
-        filter_offgrid: bool = False,
+        points: Points | List[Points],
+        filter_offgrid: bool = True,
         return_filtered: bool = False,
         **kwargs,
-        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
-        points, return_type = to_tensor(points, device=self._device, dtype=torch.float32, return_type=True)
+        ) -> Points | List[Points | Indices | List[Indices]]:
+        # Add indices to support the API.
+        pointses, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_expanded=True)
+        device = get_group_device(pointses, device=self._device)
+        return_types = [type(p) for p in pointses]
+        pointses = [to_tensor(p, device=device, dtype=torch.float32) for p in pointses]
+        other_data = []
         if filter_offgrid and return_filtered:
-            # Create filtered indices to match API.
-            indices = to_tensor([], device=points.device, dtype=torch.int32) if return_type is torch.Tensor else np.array([])
-
-        # Convert return types.
-        if return_type is np.ndarray:
-            points_t = to_numpy(points_t)
-            if filter_offgrid and return_filtered:
-                indices = to_numpy(indices)
-
-        # Format returned values.
-        results = points_t
-        if filter_offgrid and return_filtered:
-            results = [points_t, indices]
-
+            indiceses = [to_tensor([], device=device, dtype=torch.int32) for _ in pointses]
+            indiceses = to_return_format(indiceses, return_single=True, return_types=return_types)
+            other_data.append(indiceses)
+        results = to_return_format(pointses, other_data=other_data, return_types=return_types)
         return results
-        

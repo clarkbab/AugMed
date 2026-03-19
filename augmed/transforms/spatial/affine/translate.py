@@ -19,11 +19,11 @@ class Translate(Affine):
             **kwargs,
         )
         self._params = dict(
-            type=self.__class__.__name__,
             backward_matrix=self._backward_translation_matrix,
             dim=self._dim,
             matrix=self._translation_matrix,
             translation=self._translation,
+            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:
@@ -44,12 +44,11 @@ class RandomTranslate(RandomAffine):
             translation=translation,
             **kwargs,
         )
-        print('init random translate transform')
         self._params = dict(
-            type=self.__class__.__name__,
             dim=self._dim,
             p=self._p,
             translation=self._translation_range,
+            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'Translate':

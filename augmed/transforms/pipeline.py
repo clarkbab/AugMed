@@ -4,11 +4,12 @@ from typing import *
 
 from ..typing import *
 from ..utils.args import alias_kwargs, arg_to_list
-from ..utils.conversion import to_numpy, to_tensor, to_tuple
+from ..utils.conversion import to_numpy, to_return_format, to_tensor, to_tuple
 from ..utils.geometry import fov
 from ..utils.grid import grid_points, grid_sample
 from ..utils.logging import logger
 from ..utils.matrix import create_affine
+from ..utils.misc import get_group_device
 from .grid import GridTransform
 from .identity import Identity
 from .intensity import IntensityTransform
@@ -29,8 +30,8 @@ class FrozenPipeline(Transform):
         self.__transforms = transforms
         self.__warn_resamples()
         self._params = dict(
-            type=self.__class__.__name__,
             transforms=[t.params for t in self.__transforms],
+            type=self.__class__.__name__,
         )
 
     # Performs the back transform for a grid/spatial group applying
@@ -194,23 +195,22 @@ class FrozenPipeline(Transform):
         image: Image | List[Image],
         affine: Affine | None = None,
         return_affine: bool = False,
+        return_single: bool = True,
         ) -> Image | List[Image | Affine]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
-        if self._verbose:
-            logger.info(f"Transforming {len(images)} images.")
-        return_types = ['numpy' if isinstance(i, np.ndarray) else 'torch' for i in images]
-        images = [to_tensor(i, device=self._device) for i in images]
+        return_types = [type(i) for i in images]
+        device = get_group_device(images, device=self._device)
+        images = [to_tensor(i, device=device) for i in images]
         dims = [len(i.shape) for i in images]
-        if self._dim == 2:
-            for i, d in enumerate(dims):
-                assert d in [2, 3, 4], f"Expected 2-4D image (2D spatial, optional batch/channel), got {d}D for image {i}."
-        elif self._dim == 3:
-            for i, d in enumerate(dims):
-                assert d in [3, 4, 5], f"Expected 3-5D image (3D spatial, optional batch/channel), got {d}D for image {i}."
-        size = to_tensor(images[0].shape[-self._dim:], device=images[0].device, dtype=torch.int32)
-        for i, img in enumerate(images[1:], 1):
+        size = to_tensor(images[0].shape[-self._dim:], device=device, dtype=torch.int32)
+        affine = to_tensor(affine, device=device, dtype=torch.float32)
+
+        # Check image n_dims, and spatial sizes.
+        for i, img in enumerate(images):
+            n_dims = len(img.shape)
+            possible_dims = list(range(self._dim, self._dim + 3))   # E.g. for 3D, possible dims are 3-5 (3D spatial, optional batch/channel).
+            assert n_dims in possible_dims, f"Expected {self._dim}-{self._dim + 2}D image ({self._dim}D spatial, optional batch/channel), got {n_dims}D for image {i}."
             assert img.shape[-self._dim:] == images[0].shape[-self._dim:], f"All images must have the same spatial size. Expected {tuple(images[0].shape[-self._dim:])}, got {tuple(img.shape[-self._dim:])} for image {i}."
-        affine = to_tensor(affine, device=self._device, dtype=torch.float32)
 
         # Load transforms - grouped by intensity or grid/spatial types.
         transform_groups = self.__get_transform_groups()
@@ -233,7 +233,7 @@ class FrozenPipeline(Transform):
                 resample_points_list.append(None)
             elif isinstance(ts[0], (GridTransform, SpatialTransform)):
                 # Get final grid points.
-                points_t = grid_points(*gs[-1]).to(size.device)
+                points_t = grid_points(*gs[-1]).to(device)
 
                 # Back transform to their moving image locations.
                 # - Each transform requires the input grid params.
@@ -245,8 +245,6 @@ class FrozenPipeline(Transform):
                 # Append to resampling info.
                 moving_grids.append(gs[0])
                 resample_points_list.append(points_t)
-
-        final_grid = gs[-1]
 
         assert len(moving_grids) == len(transform_groups), f"Got {len(moving_grids)}, expected {len(transform_groups)}"
         assert len(resample_points_list) == len(transform_groups), f"Got {len(resample_points_list)}, expected {len(transform_groups)}"
@@ -265,110 +263,104 @@ class FrozenPipeline(Transform):
                     # Perform a single resample for all grid/spatial transforms in the 
                     # transform group.
                     moving_grid = moving_grids[j]
-                    moving_grid = (g.to(image.device) for g in moving_grid)
+                    moving_grid = (g.to(device) for g in moving_grid)
                     moving_size, moving_affine = moving_grid
                     # This warning is more for development.
                     if to_tuple(image_t.shape[-self._dim:]) != to_tuple(moving_size):
                         raise ValueError(f"Transform group {j} expected image to have spatial shape {to_tuple(moving_size)}, got {to_tuple(image_t.shape[-self._dim:])}.")
-                    points = resample_points_list[j].to(image.device)
+                    points = resample_points_list[j].to(device)
 
                     # Perform resample.
-                    image_t = grid_sample(image_t, moving_affine, points.to(image.device))
+                    image_t = grid_sample(image_t, moving_affine, points.to(device))
 
-            # Get the final affine.
-            _, affine_out = final_grid
-
-            # Convert to return types.
-            if rt == 'numpy': 
-                image_t = to_numpy(image_t)
-                if return_affine:
-                    affine_out = to_numpy(affine_out)
+            # Save resulting image.
             image_ts.append(image_t)
 
-        results = image_ts[0] if image_was_single else image_ts
+        # Convert to return format.
+        other_data = []
         if return_affine:
-            if isinstance(results, list):
-                results.append(affine_out)
-            else:
-                results = [results, affine_out]
+            other_data.append(gs[-1][1])   # Final grid affine.
+        results = to_return_format(image_ts, other_data=other_data, return_single=return_single or image_was_single, return_types=return_types)
 
         return results
 
-    # This is for point clouds, not for image resampling. Note that this
-    # requires invertibility of the back point transform, which may not be
-    # be available for some transforms (e.g. folded elastic).
     def transform_points(
         self,
-        points: Points,
+        points: Points | List[Points],
         affine: Affine | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool = True,
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
+        return_single: bool = True,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
-        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
-        points, return_type = to_tensor(points, device=self._device, dtype=torch.float32, return_type=True)
-        size = to_tensor(size, device=points.device, dtype=torch.int32)
-        affine = to_tensor(affine, device=points.device, dtype=torch.float32)
+        ) -> Points | List[Points | Indices | List[Indices]]:
+        pointses, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_expanded=True)
+        device = get_group_device(pointses, device=self._device)
+        pointses = [to_tensor(p, device=device) for p in pointses]
+        return_types = [type(p) for p in pointses]
+        size = to_tensor(size, device=device, dtype=torch.int32)
+        affine = to_tensor(affine, device=device, dtype=torch.float32)
 
-        # Chain 'transform_points' calls for SpatialTransforms.
-        grid_t = (size, affine) 
-        points_t = points
-        affine_chain = []   # Resolve chains of 4x4 affines before applying to large Nx4 points matrix.
-        for i, t in enumerate(self.__transforms):
-            if isinstance(t, GridTransform):
-                # GridTransforms don't move points/objects.
-                # Get current SamplingGrid, transform might need e.g. for centre of image for flip/crop/rotate.
-                grid_t = t.transform_grid(grid_t)
-            elif isinstance(t, Identity):
-                pass
-            elif isinstance(t, IntensityTransform):
-                pass
-            elif isinstance(t, SpatialTransform):
-                if isinstance(t, Affine):
-                    # Store affine for later.
-                    t_affine = t.get_affine_transform(points.device, grid=grid_t)
-                    # Transform 't' iterates forwards through the transform list.
-                    # We want transforms that are earlier in the list to be applied first (i.e. to be
-                    # later in the affine chain). So prepend transforms to the list.
-                    affine_chain.insert(0, t_affine)
+        points_ts = []
+        indiceses = []
+        for p in pointses:
+            # Chain 'transform_points' calls for SpatialTransforms.
+            grid_t = (size, affine)
+            points_t = p
+            affine_chain = []   # Resolve chains of 3x3 or 4x4 affines before applying to large Nx3 or Nx4 points matrix.
+            for i, t in enumerate(self.__transforms):
+                if isinstance(t, GridTransform):
+                    # GridTransforms don't move points/objects.
+                    # Get current SamplingGrid, transform might need e.g. for centre of image for flip/crop/rotate.
+                    grid_t = t.transform_grid(grid_t)
+                elif isinstance(t, Identity):
+                    pass
+                elif isinstance(t, IntensityTransform):
+                    pass
+                elif isinstance(t, SpatialTransform):
+                    if isinstance(t, Affine):
+                        # Store affine for later.
+                        t_affine = t.get_affine_transform(device, grid=grid_t)
+                        # Transform 't' iterates forwards through the transform list.
+                        # We want transforms that are earlier in the list to be applied first (i.e. to be
+                        # later in the affine chain). So prepend transforms to the list.
+                        affine_chain.insert(0, t_affine)
+                    else:
+                        # Resolve chain.
+                        if len(affine_chain) > 0:
+                            points_t = self.__resolve_affine_chain(points_t, affine_chain)
+                            affine_chain = []
+
+                        # Perform current transform.
+                        points_t = t.transform_points(points_t, filter_offgrid=False, grid=grid_t)
                 else:
-                    # Resolve chain.
-                    if len(affine_chain) > 0:
-                        points_t = self.__resolve_affine_chain(points_t, affine_chain)
-                        affine_chain = []
+                    raise ValueError(f"Unrecognised transform type: {type(t)}.")
 
-                    # Perform current transform.
-                    points_t = t.transform_points(points_t, filter_offgrid=False, grid=grid_t)
-            else:
-                raise ValueError(f"Unrecognised transform type: {type(t)}.")
+            # Resolve affines if final transform.
+            if len(affine_chain) > 0:
+                points_t = self.__resolve_affine_chain(points_t, affine_chain)
 
-        # Resolve affines if final transform.
-        if len(affine_chain) > 0:
-            points_t = self.__resolve_affine_chain(points_t, affine_chain)
+            # Filter off-grid points.
+            if filter_offgrid:
+                size_t, affine_t = grid_t
+                assert size_t is not None, "Size is required for filtering off-grid points."
+                assert affine_t is not None, "Affine is required for filtering off-grid points."
+                fov_d = fov(size_t, affine=affine_t)
+                to_keep = (points_t >= fov_d[0]) & (points_t < fov_d[1])
+                to_keep = to_keep.all(axis=1)
+                points_t = points_t[to_keep].reshape(-1, self._dim)   # If a single point, shape could be (3, ) instead of (1, 3).
+                indices = torch.where(~to_keep)[0].type(torch.int32)
+                indiceses.append(indices)
 
-        # Filter off-grid points.
-        if filter_offgrid:
-            size_t, affine_t = grid_t
-            assert size_t is not None, "Size is required for filtering off-grid points."
-            assert affine_t is not None, "Affine is required for filtering off-grid points."
-            fov_d = fov(size_t, affine=affine_t)
-            to_keep = (points_t >= fov_d[0]) & (points_t < fov_d[1])
-            to_keep = to_keep.all(axis=1)
-            points_t = points_t[to_keep]
-            indices = torch.where(to_keep)[0]
+            points_ts.append(points_t)
 
-        # Convert return types.
-        if return_type is np.ndarray:
-            points_t = to_numpy(points_t)
-            if filter_offgrid and return_filtered:
-                indices = to_numpy(indices)
-
-        # Format returned values.
-        results = points_t
+        # Convert to return format.
+        other_data = []
         if filter_offgrid and return_filtered:
-            results = [points_t, indices]
-
+            indiceses = to_return_format(indiceses, return_single=True, return_types=return_types)
+            other_data.append(indiceses)
+        results = to_return_format(points_ts, other_data=other_data, return_single=return_single and points_was_single, return_types=return_types)
         return results
 
     @property
@@ -420,8 +412,8 @@ class Pipeline(RandomTransform):
 
         self.__transforms = transforms
         self._params = dict(
-            type=self.__class__.__name__,
             transforms=[t.params for t in self.__transforms],
+            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'FrozenPipeline':

@@ -1,6 +1,7 @@
 from typing import *
 
 from ..typing import *
+from ..utils.conversion import to_return_format
 from ..utils.args import alias_kwargs, arg_to_list
 
 # What is a Transform?
@@ -96,16 +97,17 @@ class Transform:
         affine: Affine | None = None,
         filter_offgrid: bool = True,
         return_affine: bool = False,
-        return_params: bool = False,
+        return_filtered: bool = False,
         size: Size | None = None,
         ) -> Image | Points | List[Image | Points | Affine | TransformParams]:
-        datas, data_was_single = arg_to_list(data, (np.ndarray, torch.Tensor), return_expanded=True)
+        data, data_was_single = arg_to_list(data, (np.ndarray, torch.Tensor), return_expanded=True)
+        return_types = [type(d) for d in data]
 
-        # Infer data types.
+        # Split points and images.
         image_indices = []
         points_indices = []
         data_types = []
-        for i, d in enumerate(datas):
+        for i, d in enumerate(data):
             if d.shape[-1] == 2 or d.shape[-1] == 3:
                 points_indices.append(i)
                 data_types.append('points')
@@ -113,32 +115,38 @@ class Transform:
                 image_indices.append(i)
                 data_types.append('image')
 
-        # Infer sizes for offscreen point filtering.
-        if filter_offgrid:
-            if size is None:
-                if len(image_indices) == 0:
-                    raise ValueError("Size must be provided when filtering off-grid points without images.")
-                size = datas[image_indices[0]].shape[-self._dim:]
+        # Why do we need image size?
+        # 1. Points should be filtered if they end up off-grid.
+        # 2. Some transforms need the grid size to determine "image-centre", e.g. rotation/scaling.
+        # 3. Grid transforms require the size for the input SamplingGrid.
+        if size is None:
+            if len(image_indices) == 0:
+                # TODO: Perhaps we should check the transform to see if it needs size.
+                # For example, a Pipeline that only contains intensity transforms doesn't need size.
+                raise ValueError("Size must be provided when filtering off-grid points without images.")
+            size = data[image_indices[0]].shape[-self._dim:]
 
         # Transform images.
-        # This is always a deterministic transform, so 'transform_images' and 'transform_points' will make the
-        # same transformation.
-        images = [datas[i] for i in image_indices]
+        images = [data[i] for i in image_indices]
         if len(images) > 0:
-            res_ts = self.transform_images(images, affine=affine, return_affine=return_affine)
+            results = self.transform_images(images, affine=affine, return_affine=return_affine, return_single=False)
             if return_affine:
-                *image_ts, affine_t = res_ts
+                *image_ts, affine_t = results
             else:
-                image_ts = res_ts
+                image_ts = results
         else:
             image_ts = []
 
         # Transform points.
-        points = [datas[i] for i in points_indices]
-        points_ts = []
-        for p in points:
-            points_t = self.transform_points(p, filter_offgrid=filter_offgrid, size=size, affine=affine)
-            points_ts.append(points_t)
+        pointses = [data[i] for i in points_indices]
+        if len(pointses) > 0:
+            results = self.transform_points(pointses, affine=affine, filter_offgrid=filter_offgrid, return_filtered=return_filtered, return_single=False, size=size)
+            if filter_offgrid and return_filtered:
+                *points_ts, indices = results
+            else:
+                points_ts = results
+        else:
+            points_ts = []
 
         # Flatten image and points results.
         data_ts = []
@@ -152,18 +160,15 @@ class Transform:
                 points_i += 1
 
         # Convert to return format.
-        results = data_ts[0] if data_was_single else data_ts
+        other_data = []
         if return_affine:
-            if isinstance(results, list):
-                results.append(affine_t)
-            else:
-                results = [results, affine_t]
-        if return_params:
-            params_result = self._params
-            if isinstance(results, list):
-                results.append(params_result)
-            else:
-                results = [results, params_result]
+            other_data.append(affine_t)
+        if filter_offgrid and return_filtered and len(pointses) > 0:
+            # Indices could be a tensor or list of tensors for multiple points arrays.
+            points_return_types = [return_types[i] for i in points_indices]
+            indices = to_return_format(indices, return_single=True, return_types=points_return_types)
+            other_data.append(indices)
+        results = to_return_format(data_ts, other_data=other_data, return_single=data_was_single, return_types=return_types)
 
         return results
 
@@ -178,7 +183,7 @@ class Transform:
         self,
         *args,
         **kwargs,
-        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
+        ) -> Points | List[Points | Indices]:
         raise ValueError("Subclasses of 'Transform' must implement 'transform_points' method.")
 
 # RandomTransforms should have all the behaviour of a normal transform.
@@ -186,8 +191,9 @@ class RandomTransform(Transform):
     def __init__(
         self,
         p: Number = 1.0,    # What proportion of the time is the transform applied? Un-applied transforms resolve to 'Identity' when frozen.
-        seed: Optional[int] = None,
-        **kwargs) -> None:
+        seed: int | None = None,
+        **kwargs,
+        ) -> None:
         super().__init__(**kwargs)
         self._p = p
         self.set_seed(seed)
@@ -205,7 +211,8 @@ class RandomTransform(Transform):
 
     def set_seed(
         self,
-        seed: Optional[int]) -> None:
+        seed: int | None = None,
+        ) -> None:
         self._rng = np.random.default_rng(seed=seed)
 
     def __str__(
@@ -222,15 +229,16 @@ class RandomTransform(Transform):
         return_params: bool = False,
         **kwargs,
         ) -> Image | Points | List[Image | Points | List[SamplingGrid] | TransformParams]:
+        # Delegate to frozen transform.
         t_frozen = self.freeze()
         results = t_frozen.transform(*args, **kwargs)
+        results_is_single = isinstance(results, (np.ndarray, torch.Tensor))
 
         # Convert to return format.
+        other_data = []
         if return_params:
-            if isinstance(results, list):
-                results.append(t_frozen.params)
-            else:
-                results = [results, t_frozen.params]
+            other_data.append(t_frozen.params)
+        results = to_return_format(results, other_data=other_data, return_single=results_is_single)
         
         return results
 
@@ -240,15 +248,16 @@ class RandomTransform(Transform):
         return_params: bool = False,
         **kwargs,
         ) -> Image | List[Image | List[SamplingGrid] | TransformParams]:
+        # Delegate to frozen transform.
         t_frozen = self.freeze()
         results = t_frozen.transform_images(*args, **kwargs)
+        results_is_single = isinstance(results, (np.ndarray, torch.Tensor))
 
-        # Convert to return format.
+        # Add optional "params".
+        other_data = []
         if return_params:
-            if isinstance(results, list):
-                results.append(t_frozen.params)
-            else:
-                results = [results, t_frozen.params]
+            other_data.append(t_frozen.params)
+        results = to_return_format(results, other_data=other_data, return_single=results_is_single)
         
         return results
 
@@ -257,16 +266,16 @@ class RandomTransform(Transform):
         *args,
         return_params: bool = False,
         **kwargs,
-        ) -> Points | List[Points | np.ndarray | torch.Tensor | TransformParams]:
+        ) -> Points | List[Points | Indices | TransformParams]:
+        # Delegate to frozen transform.
         t_frozen = self.freeze()
         results = t_frozen.transform_points(*args, **kwargs)
+        results_is_single = isinstance(results, (np.ndarray, torch.Tensor))
 
         # Convert to return format.
+        other_data = []
         if return_params:
-            if isinstance(results, list):
-                results.append(t_frozen.params)
-            else:
-                results = [results, t_frozen.params]
-        
+            other_data.append(t_frozen.params)
+        results = to_return_format(results, other_data=other_data, return_single=results_is_single)
         return results
     

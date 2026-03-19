@@ -14,8 +14,8 @@ class BreakAffineChain(SpatialTransform):
         ) -> None:
         super().__init__(**kwargs)
         self._params = dict(
-            type=self.__class__.__name__,
             dim=self._dim,
+            type=self.__class__.__name__,
         )
 
     def backward_transform_points(
@@ -31,7 +31,18 @@ class BreakAffineChain(SpatialTransform):
 
     def transform_points(
         self,
-        points: Points,
+        points: Points | List[Points],
         **kwargs,
-        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
-        return points
+        ) -> Points | List[Points | Indices | List[Indices]]:
+        # Add indices to support the API.
+        pointses, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_expanded=True)
+        device = get_group_device(pointses, device=self._device)
+        return_types = [type(p) for p in pointses]
+        pointses = [to_tensor(p, device=device, dtype=torch.float32) for p in pointses]
+        other_data = []
+        if filter_offgrid and return_filtered:
+            indiceses = [to_tensor([], device=device, dtype=torch.int32) for _ in pointses]
+            indiceses = to_return_format(indiceses, return_single=False, return_types=return_types)
+            other_data.append(indiceses)
+        results = to_return_format(pointses, other_data=other_data, return_single=points_was_single, return_types=return_types)
+        return results

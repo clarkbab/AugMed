@@ -41,6 +41,39 @@ def to_list(
         return None 
     return to_numpy(data, **kwargs).tolist()
 
+def to_return_format(
+    data: Points | List[Image],
+    return_single: bool = True,
+    return_types: type | List[type] | None = None,
+    other_data: List[Affine | TransformParams] | None = None,
+) -> Image | Points | List[Image | Points]:
+    # Can't use "arg_to_list" because of circular dependencies.
+    if isinstance(data, (np.ndarray, torch.Tensor)):
+        data = [data]
+    if isinstance(return_types, type):
+        return_types = [return_types] * len(data)
+        assert len(return_types) == len(data), f"Length of 'return_types' must match length of 'data'. Expected {len(data)}, got {len(return_types)}."
+
+    # Convert data items to return types.
+    if return_types is not None:
+        for i, (d, rt) in enumerate(zip(data, return_types)):
+            if rt is np.ndarray:
+                data[i] = to_numpy(d)
+            elif rt is torch.Tensor:
+                data[i] = to_tensor(d)
+            else:
+                raise ValueError(f"Unsupported return type '{rt}'. Supported types are 'np.ndarray' and 'torch.Tensor'.")
+
+    # Add "other data". This could be affines or transform params.
+    if other_data is not None:
+        data += other_data
+
+    # Convert to a single value if appropriate.
+    if return_single and len(data) == 1:
+        data = data[0]
+
+    return data
+
 def to_tensor(
     data: bool | Number | str | List[bool | Number | str] | np.ndarray | torch.Tensor | torch.Size,
     broadcast: int | None = None,

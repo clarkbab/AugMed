@@ -2,14 +2,15 @@ from typing import *
 
 from ...typing import *
 from ...utils.args import expand_range_arg
-from ...utils.conversion import to_numpy, to_tensor, to_tuple
+from ...utils.conversion import to_numpy, to_return_format, to_tensor, to_tuple
 from ...utils.grid import grid_sample
 from ...utils.logging import logger
 from ...utils.matrix import affine_origin, affine_spacing, create_affine
 from ..identity import Identity
 from .spatial import RandomSpatialTransform, SpatialTransform
 
-BATCHING_MEM_P = 0.5
+BATCHING_MEM_P = 0.25
+N_ITER_MAX = 100
 
 # Defines a coarse grid of control points.
 # Random displacements are assigned at each control point.
@@ -21,6 +22,7 @@ class Elastic(SpatialTransform):
         control_origin: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
         displacement: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
         method: Literal['bspline', 'cubic', 'linear'] = 'bspline',
+        n_iter_max: int = N_ITER_MAX,
         seed: int = 42,
         use_batching: bool = True,
         **kwargs,
@@ -39,16 +41,18 @@ class Elastic(SpatialTransform):
         self.__seed = seed
         self.__use_batching = use_batching
         self.__batching_mem_p = batching_mem_p
+        self.__n_iter_max = n_iter_max
         self.__warn_folding()
         self._params = dict(
-            type=self.__class__.__name__,
             batching_mem_p=self.__batching_mem_p,
             control_origin=self.__control_origin,
             control_spacing=self.__control_spacing,
             dim=self._dim,
             displacement=self.__disp_range,
             method=self.__method,
+            n_iter_max=self.__n_iter_max,
             seed=self.__seed,
+            type=self.__class__.__name__,
             use_batching=self.__use_batching,
         )
 
@@ -79,6 +83,8 @@ class Elastic(SpatialTransform):
         n_points: int,
         device: torch.device,
         ) -> int:
+        if self._debug:
+            print("=== Elastic.__get_n_batches (start) ===")
         if device.type == 'cuda':
             mem_total = torch.cuda.get_device_properties(device).total_memory
             if self._debug:
@@ -87,10 +93,19 @@ class Elastic(SpatialTransform):
             if self._debug:
                 print(f"Allowing up to {mem_budget / (1024 ** 3):.2f} GB before applying batching.")
             bpp = self.__estimate_bytes_per_point()
-            points_per_batch = max(budget // bpp, 1)
+            if self._debug:
+                print(f"Estimated bytes per point: {bpp} B.")
+            points_per_batch = max(mem_budget // bpp, 1)
+            if self._debug:
+                print(f"Processing {points_per_batch} points per batch.")
             n_batches = max((n_points + points_per_batch - 1) // points_per_batch, 1)
+            if self._debug:
+                print(f"Total batches required: {n_batches}.")
         else:
             n_batches = 1
+
+        if self._debug:
+            print("=== Elastic.__get_n_batches (end) ===")
 
         return n_batches
 
@@ -100,7 +115,8 @@ class Elastic(SpatialTransform):
         **kwargs,
         ) -> PointsTensor:
         if self._debug:
-            print('Elastic.backward_transform_points')
+            print("=== Elastic.backward_transform_points (start) ===")
+
         # Get the control grid - will be large enough to cover all points.
         cp_disps, cp_affine = self.control_grid(points)
         cp_spacing = affine_spacing(cp_affine)
@@ -227,6 +243,9 @@ class Elastic(SpatialTransform):
         # Get displaced input points.
         points_t = points + disps
 
+        if self._debug:
+            print("=== Elastic.backward_transform_points (end) ===")
+
         return points_t
         
     # Vectorised spatial hash over world-space control point coordinates.
@@ -298,7 +317,7 @@ class Elastic(SpatialTransform):
 
         # Bring channels to the front.
         cp_disps = torch.moveaxis(cp_disps, -1, 0)
-        cp_affine = create_affine(cp_spacing, cp_origin, device=points.device, dtype=points.dtype)
+        cp_affine = create_affine(cp_spacing, cp_origin, device=points.device)
         
         return cp_disps, cp_affine
 
@@ -308,81 +327,87 @@ class Elastic(SpatialTransform):
             control_spacing=to_tuple(self.__control_spacing, decimals=3),
             displacement=to_tuple(self.__disp_range.flatten(), decimals=3),
             method=self.__method,
+            n_iter_max=self.__n_iter_max,
             seed=self.__seed,
         )
         return super().__str__(self.__class__.__name__, params)
 
     def transform_points(
         self,
-        points: Points,
+        points: Points | List[Points],
         affine: Affine | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
-        n_iter_max: int = int(1e3),
         filter_offgrid: bool = True,
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
-        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
-        points, return_type = to_tensor(points, device=self._device, dtype=torch.float32, return_type=True)
-        size = to_tensor(size, device=points.device, dtype=points.dtype)
-        affine = to_tensor(affine, device=points.device, dtype=points.dtype)
+        ) -> Points | List[Points | Indices | List[Indices]]:
+        pointses, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_expanded=True)
+        device = get_group_device(pointses, device=self._device)
+        return_types = [type(p) for p in pointses]
+        pointses = [to_tensor(p, device=device) for p in pointses]
+        size = to_tensor(size, device=device, dtype=torch.int32)
+        affine = to_tensor(affine, device=device, dtype=torch.float32)
 
-        # Method:
-        # - Let: y = x + b(x) be the location of the back-transformed point x.  
-        # - Let: F(x) = x + b(x) - y
-        # - Solve F(x) = 0, for x (using Newton-Raphson).
-        x_i = points.clone().requires_grad_()   # Use y as initial guess for x.
-        b = self.backward_transform_points      # Gives x + b(x).
-        for i in range(n_iter_max):
-            # Perform transform.
-            y_i = b(x_i)
+        points_ts = []
+        indiceses = []
+        for p in pointses:
+            # Method:
+            # - Let: y = x + b(x) be the location of the back-transformed point x.  
+            # - Let: F(x) = x + b(x) - y
+            # - Solve F(x) = 0, for x (using Newton-Raphson).
+            x_i = p.clone().requires_grad_()   # Use y as initial guess for x.
+            b = self.backward_transform_points      # Gives x + b(x).
+            for i in range(self.__n_iter_max):
+                # Perform transform.
+                y_i = b(x_i)
 
-            # Check convergence.
-            if torch.isclose(y_i, points).all():
-                break
-            elif i == n_iter_max - 1:
-                raise ValueError(f"Elastic transform failed to converge after {n_iter_max} iterations.")
+                # Check convergence.
+                if torch.isclose(y_i, p).all():
+                    break
+                elif i == self.__n_iter_max - 1:
+                    raise ValueError(f"Elastic.transform_points failed to converge after {self.__n_iter_max} iterations.")
 
-            # Get Jacobians for batch of points.
-            grads = []
-            for a in range(self._dim):
-                grad_a, = torch.autograd.grad(y_i[:, a], x_i, grad_outputs=torch.ones(len(x_i)).to(points.device), retain_graph=True)
-                grads.append(grad_a)
-            J = torch.stack(grads, dim=1)
+                # Get Jacobians for batch of points.
+                grads = []
+                for a in range(self._dim):
+                    grad_a, = torch.autograd.grad(y_i[:, a], x_i, grad_outputs=torch.ones(len(x_i)).to(device), retain_graph=True)
+                    grads.append(grad_a)
+                J = torch.stack(grads, dim=1)
 
-            # Batch solve for deltas for each point.
-            r = y_i - points
-            dx = torch.linalg.solve(J, r)
+                # Batch solve for deltas for each point.
+                r = y_i - points
+                dx = torch.linalg.solve(J, r)
 
-            # Update guess.
-            x_i = x_i.detach()  # How does it get 'requires_grad_' again, must be through 'dx'.
-            x_i = x_i - dx
+                # Update guess.
+                x_i = x_i.detach()  # How does it get 'requires_grad_' again, must be through 'dx'.
+                x_i = x_i - dx
 
-        logger.info(f"Elastic transform points converged after {i} iterations.")
-        points_t = x_i.detach()
+            if self._debug:
+                print(f"Elastic.transform_points converged after {i} iterations.")
 
-        # Forward transformed points could end up off-screen and should be filtered.
-        # However, we need to know which points are returned for loss calc for example.
-        if filter_offgrid:
-            assert size is not None, "Size must be provided for filtering off-grid points."
-            assert affine is not None, "Affine must be provided for filtering off-grid points."
-            fov = torch.stack([affine[:3, 3], affine[:3, 3] + size * affine[:3, :3].diag()]).to(points.device)
-            to_keep = (points_t >= fov[0]) & (points_t < fov[1])
-            to_keep = to_keep.all(axis=1)
-            points_t = points_t[to_keep]
-            indices = torch.where(to_keep)[0]
+            points_t = x_i.detach()
 
-        # Convert return types.
-        if return_type is np.ndarray:
-            points_t = to_numpy(points_t)
-            if filter_offgrid and return_filtered:
-                indices = to_numpy(indices)
+            # Forward transformed points could end up off-screen and should be filtered.
+            # However, we need to know which points are returned for loss calc for example.
+            if filter_offgrid:
+                assert size is not None, "Size must be provided for filtering off-grid points."
+                assert affine is not None, "Affine must be provided for filtering off-grid points."
+                fov = torch.stack([affine[:3, 3], affine[:3, 3] + size * affine[:3, :3].diag()]).to(device)
+                to_keep = (points_t >= fov[0]) & (points_t < fov[1])
+                to_keep = to_keep.all(axis=1)
+                points_t = points_t[to_keep]
+                indices = torch.where(~to_keep)[0].type(torch.int32)
+                indiceses.append(indices)
 
-        # Format returned values.
-        results = points_t
+            points_ts.append(points_t)
+
+        # Convert to return format.
+        other_data = []
         if filter_offgrid and return_filtered:
-            results = [points_t, indices]
-
+            indiceses = to_return_format(indiceses, return_single=False, return_types=return_types)
+            other_data.append(indiceses)
+        results = to_return_format(points_ts, other_data=other_data, return_single=points_was_single, return_types=return_types)
         return results
 
 class RandomElastic(RandomSpatialTransform):
@@ -393,7 +418,9 @@ class RandomElastic(RandomSpatialTransform):
         control_origin: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
         displacement: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
         # Can we randomise the fitting method too?
-        method: Literal['bspline', 'cubic', 'linear'] = 'linear',
+        method: Literal['bspline', 'cubic', 'linear'] = 'bspline',
+        n_iter_max: int = N_ITER_MAX,
+        use_batching: bool = True,
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
@@ -407,28 +434,22 @@ class RandomElastic(RandomSpatialTransform):
         disp_range = expand_range_arg(displacement, dim=self._dim, negate_lower=True)
         assert len(disp_range) == 2 * self._dim, f"Expected 'displacement' of length {2 * self._dim}, got {len(disp_range)}."
         self.__disp_range = to_tensor(disp_range).reshape(self._dim, 2)
+        self.__use_batching = use_batching
         self.__batching_mem_p = batching_mem_p
+        self.__n_iter_max = n_iter_max
+        self.__warn_folding()
         self._params = dict(
-            type=self.__class__.__name__,
             batching_mem_p=self.__batching_mem_p,
             control_origin=self.__control_origin_range,
             control_spacing=self.__control_spacing_range,
             dim=self._dim,
             displacement=self.__disp_range,
             method=self.__method,
+            n_iter_max=self.__n_iter_max,
             p=self._p,
+            type=self.__class__.__name__,
+            use_batching=self.__use_batching,
         )
-
-        self.__warn_folding()
-
-    def __warn_folding(self, control_spacing: torch.Tensor | None = None) -> None:
-        if control_spacing is None:
-            control_spacing, _ = self.__control_spacing_range.min(axis=1)
-        disp_widths = self.__disp_range[:, 1] - self.__disp_range[:, 0]
-        if (disp_widths >= control_spacing).any():
-            logger.warning(f"RandomElastic transforms with displacement widths ({to_tuple(disp_widths)}) >= "
-                f"control spacings ({to_tuple(control_spacing)}) may produce folding transforms. Such transforms may "
-                f"be non-invertible and could raise errors when performing forward points transform.")
 
     def freeze(self) -> 'Elastic':
         should_apply = self._rng.random(1) < self._p
@@ -447,6 +468,7 @@ class RandomElastic(RandomSpatialTransform):
             control_spacing=control_spacing_draw,
             displacement=self.__disp_range.flatten(),
             method=self.__method,
+            n_iter_max=self.__n_iter_max,
             seed=seed_draw,
             use_batching=self.__use_batching,
         )
@@ -458,6 +480,17 @@ class RandomElastic(RandomSpatialTransform):
             control_origin=to_tuple(self.__control_origin_range.flatten(), decimals=3),
             control_spacing=to_tuple(self.__control_spacing_range.flatten(), decimals=3),
             displacement=to_tuple(self.__disp_range.flatten(), decimals=3),
+            method=self.__method,
+            n_iter_max=self.__n_iter_max,
             use_batching=self.__use_batching,
         )
         return super().__str__(self.__class__.__name__, params)
+
+    def __warn_folding(self, control_spacing: torch.Tensor | None = None) -> None:
+        if control_spacing is None:
+            control_spacing, _ = self.__control_spacing_range.min(axis=1)
+        disp_widths = self.__disp_range[:, 1] - self.__disp_range[:, 0]
+        if (disp_widths >= control_spacing).any():
+            logger.warning(f"RandomElastic transforms with displacement widths ({to_tuple(disp_widths)}) >= "
+                f"control spacings ({to_tuple(control_spacing)}) may produce folding transforms. Such transforms may "
+                f"be non-invertible and could raise errors when performing forward points transform.")

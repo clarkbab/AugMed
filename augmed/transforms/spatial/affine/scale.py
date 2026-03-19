@@ -21,12 +21,12 @@ class Scale(Affine):
             **kwargs,
         )
         self._params = dict(
-            type=self.__class__.__name__,
             backward_matrix=self._backward_scaling_matrix,
             dim=self._dim,
             matrix=self._scaling_matrix,
             scaling=self._scaling,
             scaling_centre=self._scaling_centre,
+            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:
@@ -51,13 +51,12 @@ class RandomScale(RandomAffine):
             translation=None,
             **kwargs,
         )
-        print('init random scale transform')
         self._params = dict(
-            type=self.__class__.__name__,
             dim=self._dim,
             p=self._p,
             scaling=self._scaling_range,
             scaling_centre=self._scaling_centre,
+            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'Scale':

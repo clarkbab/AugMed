@@ -1,5 +1,12 @@
 ## Design decisions
 
+TODO:
+- Convert transform_points methods to take points or list of points.
+  - Have updated Affine/Pipeline/Transform. Complete for other transforms.
+- Benchmark in comparison with other libraries: torchio, albumentations, monai, torchvision.
+- Create test suite.
+- Get some alpha/beta testing.
+
 ### API
 
 Public methods should take np.ndarray/torch.Tensor types and perform calcs on the same device as the passed tensor (or CPU for numpy), however device can be overridden at transform instantation. Internal methods (e.g. transform_grid) should accept only torch.Tensor types.
@@ -15,4 +22,12 @@ Internal methods:
 - transform_grid
 - transform_intensity
 
-All points are expected in world coordinates (size/affine required only for filtering), but this might be changed in future. I don't think we could infer voxel coords from absence of affine as it's only used for filtering - we'd need a param, e.g. "use_image_coords".
+All points are expected in world coordinates, is this reasonable?
+
+Transform_images accepts multiple images, but these images must share the sampling SamplingGrid as then we only need to compute resampling point positions once and apply to all images to create the resampled images. For transform_points, there's really no point in allowing a List[Points] as input, as there's no efficiency to be gained by batching these. But.. maybe it's better for the user to be able to pass transform_points[List[points]], like they can do with transform(List[Points])?
+
+Should we allow users to compute List[Image] transforms on multiple devices with a single "transform_images" call? I don't think this will give much speed-up as most of the work is the "back_transform_points" for a huge points array which is shared by all images - also, which device do we assign to do this task?. The resampling step should be fairly quick by comparison.
+
+In that case, how do we assign a device to perform the transforms? Transform.__init__(device=...) allows us to set this at a high level. But if this is not set: For "transform_points" it's easy, just use the device of the points torch.Tensor (or CPU if np.ndarray). For "transform_images", we'll just have to select the device of images[0].
+
+We should match the input types when setting return types. I.e. if the user passed all numpy arrays, they should get numpy arrays out, even though Transform(device='cuda').

@@ -14,6 +14,7 @@ from ..typing import (
 from .assertions import assert_orientation
 from .conversion import to_numpy
 from .geometry import foreground_fov_centre
+from .logging import logger
 from .matrix import affine_origin, affine_spacing
 
 VIEWS = ['Sagittal', 'Coronal', 'Axial']
@@ -123,7 +124,7 @@ def plot_slice(
         show = False
 
     # Plot slice.
-    ax.imshow(data.T, cmap=cmap, vmin=vmin, vmax=vmax)
+    ax.imshow(data.T, cmap=cmap, vmax=vmax, vmin=vmin)
 
     # Plot labels.
     if labels is not None:
@@ -182,6 +183,15 @@ def plot_volume(
     dose = to_numpy(dose)
     labels = to_numpy(labels)
     points = to_numpy(points)
+    # Check for empty points array - could be filtered by the transform.
+    if points is not None:
+        if points.shape[0] == 0:
+            logger.warn("Points array is empty. No points will be plotted.")
+            points = None
+            if centre.startswith('points:'):
+                centre = None
+        else:
+            assert points.shape[1] == 3, f"Expected points to have shape (N, 3) but got {points.shape}."
     if not isinstance(centre, str):
         centre = to_numpy(centre)
 
@@ -200,7 +210,7 @@ def plot_volume(
         origin_x, origin_y = _get_view_origin(v, orientation=orientation)
 
         # The two non-view axes: first is displayed on x, second on y.
-        col_ax.imshow(image.T, aspect=aspect, cmap=cmap, origin=origin_y, vmin=vmin, vmax=vmax)
+        col_ax.imshow(image.T, aspect=aspect, cmap=cmap, origin=origin_y, vmax=vmax, vmin=vmin)
         if origin_x == 'upper':
             col_ax.invert_xaxis()
 
@@ -242,8 +252,8 @@ def plot_volume(
                 col_ax.scatter(vox[view_axes[0]], vox[view_axes[1]], c=[points_colours[pi]], marker='o', s=20, zorder=5)
                 if show_point_idxs:
                     col_ax.annotate(str(pi), (vox[view_axes[0]], vox[view_axes[1]]),
-                        textcoords='offset points', xytext=(5, 5),
-                        fontsize=8, color=points_colours[pi], zorder=5)
+                        color=points_colours[pi], fontsize=8,
+                        textcoords='offset points', xytext=(5, 5), zorder=5)
 
         # Coordinate ticks.
         size_x, size_y = _get_view_xy(v, data.shape)

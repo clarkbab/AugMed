@@ -54,20 +54,20 @@ class Affine(SpatialTransform):
             self._translation = None
         self.__create_transforms()
         self._params = dict(
-            type=self.__class__.__name__,
             backward_rotation_matrix=self._backward_rotation_matrix,
             backward_scaling_matrix=self._backward_scaling_matrix,
             backward_translation_matrix=self._backward_translation_matrix,
             dim=self._dim,
-            scaling=self._scaling,
-            scaling_centre=self._scaling_centre,
-            scaling_matrix=self._scaling_matrix,
             rotation=self._rotation,
             rotation_centre=self._rotation_centre,
             rotation_matrix=self._rotation_matrix,
             rotation_rad=self._rotation_rad,
+            scaling=self._scaling,
+            scaling_centre=self._scaling_centre,
+            scaling_matrix=self._scaling_matrix,
             translation=self._translation,
             translation_matrix=self._translation_matrix,
+            type=self.__class__.__name__,
         )
     
     # This is used for image resampling, not for point clouds.
@@ -166,7 +166,6 @@ class Affine(SpatialTransform):
         grid: SamplingGrid | None = None,   # Required for 'image-centre' rotation/scale.
         **kwargs,
         ) -> AffineTensor:
-        print('getting rotation forward transform')
         # Get rotation matrices.
         if self._rotation is not None:
             # Get centre of rotation.
@@ -243,50 +242,53 @@ class Affine(SpatialTransform):
     # be available for some transforms (e.g. folded elastic).
     def transform_points(
         self,
-        points: Points,
+        points: Points | List[Points],
         affine: Affine | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool = True,
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
-        ) -> Points | List[Points | np.ndarray | torch.Tensor]:
-        points, return_type = to_tensor(points, device=self._device, dtype=torch.float32, return_type=True)
-        size = to_tensor(size, device=points.device, dtype=points.dtype)
-        affine = to_tensor(affine, device=points.device, dtype=points.dtype)
+        ) -> Points | List[Points | Indices | List[Indices]]:
+        pointses, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_expanded=True)
+        device = get_group_device(pointses, device=self._device)
+        return_types = [type(p) for p in pointses]
+        pointses = [to_tensor(p, device=device, dtype=torch.float32) for p in pointses]
+        size = to_tensor(size, device=device, dtype=torch.int32)
+        affine = to_tensor(affine, device=device, dtype=torch.float32)
 
-        # Get homogeneous matrix.
-        matrix_a = self.get_affine_transform(device, grid=grid)
+        points_ts = []
+        indiceses = []
+        for p in pointses:
+            # Get homogeneous matrix.
+            matrix_a = self.get_affine_transform(device, grid=grid)
 
-        # Perform forward transform.
-        points_h = torch.hstack([points, torch.ones((points.shape[0], 1), device=points.device, dtype=points.dtype)])  # Move to homogeneous coords.
-        points_t_h = torch.linalg.multi_dot([matrix_a, points_h.T]).T
-        points_t = points_t_h[:, :-1]
+            # Perform forward transform.
+            points_h = torch.hstack([p, torch.ones((p.shape[0], 1), device=device, dtype=torch.float32)])  # Move to homogeneous coords.
+            points_t_h = torch.linalg.multi_dot([matrix_a, points_h.T]).T
+            points_t = points_t_h[:, :-1]
 
-        # Forward transformed points could end up off-screen and should be filtered.
-        # However, we need to know which points are returned for loss calc for example.
-        if filter_offgrid:
-            assert size is not None, "Size must be provided for filtering off-grid points."
-            assert affine is not None, "Affine must be provided for filtering off-grid points."
-            grid = torch.stack([affine[:3, 3], affine[:3, 3] + size * affine[:3, :3].diag()]).to(points.device)
-            to_keep = (points_t >= grid[0]) & (points_t < grid[1])
-            to_keep = to_keep.all(axis=1)
-            points_t = points_t[to_keep]
-            indices = torch.where(to_keep)[0]
+            # Forward transformed points could end up off-screen and should be filtered.
+            # However, we need to know which points are returned for loss calc for example.
+            if filter_offgrid:
+                assert size is not None, "Size must be provided for filtering off-grid points."
+                assert affine is not None, "Affine must be provided for filtering off-grid points."
+                grid = torch.stack([affine[:3, 3], affine[:3, 3] + size * affine[:3, :3].diag()]).to(device)
+                to_keep = (points_t >= grid[0]) & (points_t < grid[1])
+                to_keep = to_keep.all(axis=1)
+                points_t = points_t[to_keep]
+                indices = torch.where(~to_keep)[0].type(torch.int32)
+                indiceses.append(indices)
 
-        # Convert return types.
-        if return_type is np.ndarray:
-            points_t = to_numpy(points_t)
-            if filter_offgrid and return_filtered:
-                indices = to_numpy(indices)
+            points_ts.append(points_t)
 
-        # Format returned values.
-        results = points_t
+        # Convert to return format.
+        other_data = []
         if filter_offgrid and return_filtered:
-            results = [points_t, indices]
-
+            indiceses = to_return_format(indiceses, return_single=True, return_types=return_types)
+            other_data.append(indiceses)
+        results = to_return_format(points_ts, other_data=other_data, return_single=points_was_single, return_types=return_types)
         return results
-
 
 class RandomAffine(RandomSpatialTransform):
     @alias_kwargs([
@@ -329,7 +331,6 @@ class RandomAffine(RandomSpatialTransform):
         else:
             self._translation_range = None
         self._params = dict(
-            type=self.__class__.__name__,
             dim=self._dim,
             p=self._p,
             rotation=self._rotation_range,
@@ -337,6 +338,7 @@ class RandomAffine(RandomSpatialTransform):
             scaling=self._scaling_range,
             scaling_centre=self._scaling_centre,
             translation=self._translation_range,
+            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'Affine':
