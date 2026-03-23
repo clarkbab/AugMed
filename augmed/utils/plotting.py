@@ -106,7 +106,9 @@ def plot_slice(
     vmin: float | None = None,
     vmax: float | None = None,
     x_label: str | None = None,
+    x_origin: Literal['lower', 'upper'] | None = 'lower',
     y_label: str | None = None,
+    y_origin: Literal['lower', 'upper'] | None = 'lower',
     ) -> mpl.axes.Axes:
     if isinstance(data, torch.Tensor):
         data = data.cpu().numpy()
@@ -119,7 +121,7 @@ def plot_slice(
         show = False
 
     # Plot slice.
-    ax.imshow(data.T, cmap=cmap, vmax=vmax, vmin=vmin)
+    ax.imshow(data.T, cmap=cmap, vmax=vmax, vmin=vmin, origin=y_origin)
 
     # Plot labels.
     if labels is not None:

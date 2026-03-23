@@ -309,54 +309,61 @@ class RandomAffine(RandomSpatialTransform):
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
-        if rotation is not None:
-            rotation_range = expand_range_arg(rotation, dim=self._dim, negate_lower=True)
-            assert len(rotation_range) == 2 * self._dim, f"Expected 'rotation' of length {2 * self._dim}, got {len(rotation_range)}."
-            if isinstance(rotation_centre, tuple):
-                assert len(rotation_centre) == self._dim, f"Rotate centre must have {self._dim} dimensions."
-            self._rotation_range = to_tensor(rotation_range).reshape(self._dim, 2)
-        else:
-            self._rotation_range = None
+        self._rotation = rotation
         self._rotation_centre = to_tensor(rotation_centre) if not rotation_centre == 'image-centre' else rotation_centre
-        if scaling is not None:
-            scaling_range = expand_range_arg(scaling, dim=self._dim, negate_lower=False)
-            assert len(scaling_range) == 2 * self._dim, f"Expected 'scaling' of length {2 * self._dim}, got {len(scaling_range)}."
-            self._scaling_range = to_tensor(scaling_range).reshape(self._dim, 2)
-        else:
-            self._scaling_range = None
+        self._scaling = scaling
         self._scaling_centre = to_tensor(scaling_centre) if not scaling_centre == 'image-centre' else scaling_centre
-        if translation is not None:
-            translation_range = expand_range_arg(translation, dim=self._dim, negate_lower=True)
-            assert len(translation_range) == 2 * self._dim, f"Expected 'translation' of length {2 * self._dim}, got {len(translation_range)}."
-            self._translation_range = to_tensor(translation_range).reshape(self._dim, 2)
-        else:
-            self._translation_range = None
+        self._translation = translation
         super().set_params(
             self.__class__.__name__,
-            rotation=self._rotation_range,
+            rotation=self._rotation,
             rotation_centre=self._rotation_centre,
-            scaling=self._scaling_range,
+            scaling=self._scaling,
             scaling_centre=self._scaling_centre,
-            translation=self._translation_range,
+            translation=self._translation,
         )
 
     def freeze(self) -> 'Affine':
+        # Expand the range args.
+        # We do this now because 'set_dim' could be called after RandomAffine.__init__.
+        if self._rotation is not None:
+            rotation_range = expand_range_arg(self._rotation, dim=self._dim, negate_lower=True)
+            assert len(rotation_range) == 2 * self._dim, f"Expected 'rotation' of length {2 * self._dim}, got {len(rotation_range)}."
+            if isinstance(self._rotation_centre, tuple):
+                assert len(self._rotation_centre) == self._dim, f"Rotate centre must have {self._dim} dimensions."
+            rotation_range = to_tensor(rotation_range).reshape(self._dim, 2)
+        else:
+            rotation_range = None
+        if self._scaling is not None:
+            scaling_range = expand_range_arg(self._scaling, dim=self._dim, negate_lower=False)
+            assert len(scaling_range) == 2 * self._dim, f"Expected 'scaling' of length {2 * self._dim}, got {len(scaling_range)}."
+            scaling_range = to_tensor(scaling_range).reshape(self._dim, 2)
+        else:
+            scaling_range = None
+        if self._translation is not None:
+            translation_range = expand_range_arg(self._translation, dim=self._dim, negate_lower=True)
+            assert len(translation_range) == 2 * self._dim, f"Expected 'translation' of length {2 * self._dim}, got {len(translation_range)}."
+            translation_range = to_tensor(translation_range).reshape(self._dim, 2)
+        else:
+            translation_range = None
+
+        # Draw the affine parameters.
         should_apply = self._rng.random(1) < self._p
         if not should_apply:
             return Identity(dim=self._dim)
         draw = to_tensor(self._rng.random(self._dim))
-        if self._rotation_range is not None:
-            rot_draw = to_tuple(draw * (self._rotation_range[:, 1] - self._rotation_range[:, 0]) + self._rotation_range[:, 0])
+        if rotation_range is not None:
+            rot_draw = to_tuple(draw * (rotation_range[:, 1] - rotation_range[:, 0]) + rotation_range[:, 0])
         else:
             rot_draw = None
         draw = to_tensor(self._rng.random(self._dim))
-        if self._scaling_range is not None:
-            scale_draw = to_tuple(draw * (self._scaling_range[:, 1] - self._scaling_range[:, 0]) + self._scaling_range[:, 0])
+        if scaling_range is not None:
+            scale_draw = to_tuple(draw * (scaling_range[:, 1] - scaling_range[:, 0]) + scaling_range[:, 0])
         else:
             scale_draw = None
         draw = to_tensor(self._rng.random(self._dim))
-        if self._translation_range is not None:
-            trans_draw = to_tuple(draw * (self._translation_range[:, 1] - self._translation_range[:, 0]) + self._translation_range[:, 0])
+        if translation_range is not None:
+            trans_draw = to_tuple(draw * (translation_range[:, 1] - translation_range[:, 0]) + translation_range[:, 0])
         else:
             trans_draw = None
         params = dict(
@@ -385,11 +392,11 @@ class RandomAffine(RandomSpatialTransform):
     def __str__(self) -> str:
         return super().__str__(
             self.__class__.__name__,
-            rotation=to_tuple(self._rotation_range.flatten(), decimals=3) if self._rotation_range is not None else None,
-            rotation_centre=to_tuple(self._rotation_centre, decimals=3) if self._rotation_centre != 'image-centre' else "\"image-centre\"",
-            scaling=to_tuple(self._scaling_range.flatten(), decimals=3) if self._scaling_range is not None else None,
-            scaling_centre=to_tuple(self._scaling_centre, decimals=3) if self._scaling_centre != 'image-centre' else "\"image-centre\"",
-            translation=to_tuple(self._translation_range.flatten(), decimals=3) if self._translation_range is not None else None,
+            rotation=self._rotation,
+            rotation_centre=self._rotation_centre,
+            scaling=self._scaling,
+            scaling_centre=self._scaling_centre,
+            translation=self._translation,
         )
 
     def super_freeze(

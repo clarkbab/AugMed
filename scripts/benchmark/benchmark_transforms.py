@@ -52,22 +52,22 @@ PIPELINE_DEFS = {
     'crop+affine+elastic+minmax': ['crop', 'affine', 'elastic', 'minmax'],
 }
 
-DATA_MODES = ['image', 'image-labels', 'image-labels-points']
+INPUTS = ['image', 'image-labels', 'image-labels-points']
 
-# Which data modes each library supports.
-LIBRARY_DATA_MODES = {
+# Which inputs each library supports.
+LIBRARY_INPUTS = {
     'augmed': ['image', 'image-labels', 'image-labels-points'],
     'monai': ['image', 'image-labels'],
     'torchio': ['image', 'image-labels'],
 }
 
-NDIMS = ['2d', '3d']
+DIMS = [2, 3]
 
 # Which dimensionalities each library supports.
-LIBRARY_NDIMS = {
-    'augmed': ['2d', '3d'],
-    'monai': ['2d', '3d'],
-    'torchio': ['2d', '3d'],
+LIBRARY_DIMS = {
+    'augmed': [2, 3],
+    'monai': [2, 3],
+    'torchio': [2, 3],         # 2-D slices promoted to (C, 1, H, W) pseudo-volumes.
 }
 
 # Shared transform parameters that are as close as possible across
@@ -85,9 +85,9 @@ MINMAX_RANGE = (0.0, 1.0)
 # Data loading
 # ---------------------------------------------------------------------------
 
-def load_data(device: torch.device, ndim: str) -> Dict[str, Any]:
+def load_data(device: torch.device, dim: int) -> Dict[str, Any]:
     """Load (or generate) representative data for the given dimensionality."""
-    if ndim == '3d':
+    if dim == 3:
         return _load_data_3d(device)
     return _load_data_2d(device)
 
@@ -138,7 +138,7 @@ def _load_data_3d(device: torch.device) -> Dict[str, Any]:
 # augmed pipelines
 # ---------------------------------------------------------------------------
 
-def _build_augmed_pipeline(steps: List[str], *, device: torch.device) -> Any:
+def _build_augmed_pipeline(steps: List[str], *, device: torch.device, dim: int) -> Any:
     from augmed import (
         MinMax,
         Pipeline,
@@ -146,13 +146,13 @@ def _build_augmed_pipeline(steps: List[str], *, device: torch.device) -> Any:
         RandomCrop,
         RandomElastic,
     )
-
     transforms = []
     for s in steps:
         if s == 'crop':
-            transforms.append(RandomCrop(remove=CROP_REMOVE_MM))
+            transforms.append(RandomCrop(dim=dim, remove=CROP_REMOVE_MM))
         elif s == 'affine':
             transforms.append(RandomAffine(
+                dim=dim,
                 rotation=ROTATION_DEG,
                 scaling=SCALING_RANGE,
                 translation=TRANSLATION_MM,
@@ -160,28 +160,29 @@ def _build_augmed_pipeline(steps: List[str], *, device: torch.device) -> Any:
         elif s == 'elastic':
             transforms.append(RandomElastic(
                 control_spacing=ELASTIC_SPACING_MM,
+                dim=dim,
                 displacement=ELASTIC_DISP_MM,
             ))
         elif s == 'minmax':
-            transforms.append(MinMax(max=MINMAX_RANGE[1], min=MINMAX_RANGE[0]))
+            transforms.append(MinMax(dim=dim, max=MINMAX_RANGE[1], min=MINMAX_RANGE[0]))
         else:
             raise ValueError(f'Unknown step: {s}')
 
-    return Pipeline(transforms, device=device, seed=42)
+    return Pipeline(transforms, device=device, dim=dim, seed=42)
 
 
 def run_augmed(
     data: Dict[str, Any],
-    data_mode: str,
+    dim: int,
     device: torch.device,
-    ndim: str,
+    input_mode: str,
     steps: List[str],
 ) -> None:
-    pipeline = _build_augmed_pipeline(steps, device=device)
+    pipeline = _build_augmed_pipeline(steps, device=device, dim=dim)
     inputs = [data['ct_data']]
-    if data_mode in ('image-labels', 'image-labels-points'):
+    if input_mode in ('image-labels', 'image-labels-points'):
         inputs.append(data['labels'])
-    if data_mode == 'image-labels-points':
+    if input_mode == 'image-labels-points':
         inputs.append(data['points'])
     pipeline.transform(*inputs, affine=data['affine'])
     if device.type == 'cuda':
@@ -196,22 +197,21 @@ def _build_monai_image_pipeline(
     steps: List[str],
     *,
     device: torch.device,
-    ndim: str,
+    dim: int,
 ) -> Any:
     """Build a MONAI pipeline for image-only mode (non-dict transforms)."""
     from monai.transforms import (
         Compose,
-        EnsureChannelFirst,
         RandAffine,
         RandSpatialCrop,
         ScaleIntensityRange,
     )
 
-    roi_size = [156, 156] if ndim == '2d' else [156, 156, 78]
-    n_spatial = 2 if ndim == '2d' else 3
-    rot_range = [np.deg2rad(ROTATION_DEG)] * (1 if ndim == '2d' else 3)
+    roi_size = [156, 156] if dim == 2 else [156, 156, 78]
+    n_spatial = dim
+    rot_range = [np.deg2rad(ROTATION_DEG)] * (1 if dim == 2 else 3)
 
-    transforms: list = [EnsureChannelFirst()]
+    transforms: list = []
     for s in steps:
         if s == 'crop':
             transforms.append(RandSpatialCrop(
@@ -227,7 +227,7 @@ def _build_monai_image_pipeline(
                 translate_range=[TRANSLATION_MM] * n_spatial,
             ))
         elif s == 'elastic':
-            transforms.append(_monai_elastic_transform(ndim=ndim))
+            transforms.append(_monai_elastic_transform(dim=dim))
         elif s == 'minmax':
             transforms.append(ScaleIntensityRange(
                 a_max=float(MINMAX_RANGE[1]),
@@ -244,22 +244,21 @@ def _build_monai_dict_pipeline(
     steps: List[str],
     *,
     device: torch.device,
-    ndim: str,
+    dim: int,
 ) -> Any:
     """Build a MONAI pipeline for image-labels mode (dict transforms)."""
     from monai.transforms import (
         Compose,
-        EnsureChannelFirstd,
         RandAffined,
         RandSpatialCropd,
         ScaleIntensityRanged,
     )
 
-    roi_size = [156, 156] if ndim == '2d' else [156, 156, 78]
-    n_spatial = 2 if ndim == '2d' else 3
-    rot_range = [np.deg2rad(ROTATION_DEG)] * (1 if ndim == '2d' else 3)
+    roi_size = [156, 156] if dim == 2 else [156, 156, 78]
+    n_spatial = dim
+    rot_range = [np.deg2rad(ROTATION_DEG)] * (1 if dim == 2 else 3)
 
-    transforms: list = [EnsureChannelFirstd(keys=['image', 'label'])]
+    transforms: list = []
     for s in steps:
         if s == 'crop':
             transforms.append(RandSpatialCropd(
@@ -277,7 +276,7 @@ def _build_monai_dict_pipeline(
                 translate_range=[TRANSLATION_MM] * n_spatial,
             ))
         elif s == 'elastic':
-            transforms.append(_monai_elastic_transform_d(ndim=ndim))
+            transforms.append(_monai_elastic_transform_d(dim=dim))
         elif s == 'minmax':
             transforms.append(ScaleIntensityRanged(
                 a_max=float(MINMAX_RANGE[1]),
@@ -291,9 +290,9 @@ def _build_monai_dict_pipeline(
     return Compose(transforms)
 
 
-def _monai_elastic_transform(*, ndim: str) -> Any:
+def _monai_elastic_transform(*, dim: int) -> Any:
     """Return the appropriate MONAI elastic transform for the dimensionality."""
-    if ndim == '2d':
+    if dim == 2:
         from monai.transforms import Rand2DElastic
         return Rand2DElastic(
             magnitude_range=(0, ELASTIC_DISP_MM),
@@ -310,9 +309,9 @@ def _monai_elastic_transform(*, ndim: str) -> Any:
     )
 
 
-def _monai_elastic_transform_d(*, ndim: str) -> Any:
+def _monai_elastic_transform_d(*, dim: int) -> Any:
     """Return the appropriate MONAI dict elastic transform."""
-    if ndim == '2d':
+    if dim == 2:
         from monai.transforms import Rand2DElasticd
         return Rand2DElasticd(
             keys=['image', 'label'],
@@ -333,19 +332,21 @@ def _monai_elastic_transform_d(*, ndim: str) -> Any:
 
 def run_monai(
     data: Dict[str, Any],
-    data_mode: str,
+    dim: int,
     device: torch.device,
-    ndim: str,
+    input_mode: str,
     steps: List[str],
 ) -> None:
-    if data_mode == 'image':
-        pipeline = _build_monai_image_pipeline(steps, device=device, ndim=ndim)
-        pipeline(data['ct_data'].cpu().numpy())
+    # Add channel dim — MONAI expects (C, *spatial).
+    img = data['ct_data'].unsqueeze(0).cpu().numpy()
+    if input_mode == 'image':
+        pipeline = _build_monai_image_pipeline(steps, device=device, dim=dim)
+        pipeline(img)
     else:
-        pipeline = _build_monai_dict_pipeline(steps, device=device, ndim=ndim)
+        pipeline = _build_monai_dict_pipeline(steps, device=device, dim=dim)
         sample = {
-            'image': data['ct_data'].cpu().numpy(),
-            'label': data['labels'].cpu().numpy(),
+            'image': img,
+            'label': data['labels'].cpu().numpy(),   # already (1, *spatial)
         }
         pipeline(sample)
     if device.type == 'cuda':
@@ -356,13 +357,18 @@ def run_monai(
 # TorchIO pipelines
 # ---------------------------------------------------------------------------
 
-def _build_torchio_pipeline(steps: List[str], *, device: torch.device) -> Any:
+def _build_torchio_pipeline(steps: List[str], *, device: torch.device, dim: int) -> Any:
     import torchio as tio
 
+    crop_amount = int(CROP_REMOVE_MM)
     transforms = []
     for s in steps:
         if s == 'crop':
-            transforms.append(tio.Crop(CROP_REMOVE_MM))
+            if dim == 2:
+                # (D, H, W) bounds — don't crop singleton depth axis.
+                transforms.append(tio.Crop((0, 0, crop_amount, crop_amount, crop_amount, crop_amount)))
+            else:
+                transforms.append(tio.Crop(crop_amount))
         elif s == 'affine':
             transforms.append(tio.RandomAffine(
                 degrees=ROTATION_DEG,
@@ -383,25 +389,25 @@ def _build_torchio_pipeline(steps: List[str], *, device: torch.device) -> Any:
 
 def run_torchio(
     data: Dict[str, Any],
-    data_mode: str,
+    dim: int,
     device: torch.device,
-    ndim: str,
+    input_mode: str,
     steps: List[str],
 ) -> None:
     import torchio as tio
 
-    pipeline = _build_torchio_pipeline(steps, device=device)
+    pipeline = _build_torchio_pipeline(steps, device=device, dim=dim)
     # TorchIO expects 4-D tensors (C, D, H, W).  For 2-D data add a
     # singleton depth dimension so the transforms still apply.
     img_tensor = data['ct_data'].unsqueeze(0).cpu()     # (1, *spatial)
-    if ndim == '2d':
+    if dim == 2:
         img_tensor = img_tensor.unsqueeze(1)             # (1, 1, H, W)
     kwargs = dict(
         image=tio.ScalarImage(tensor=img_tensor),
     )
-    if data_mode == 'image-labels':
+    if input_mode == 'image-labels':
         lbl_tensor = data['labels'].cpu()                # (1, *spatial)
-        if ndim == '2d':
+        if dim == 2:
             lbl_tensor = lbl_tensor.unsqueeze(1)         # (1, 1, H, W)
         kwargs['label'] = tio.LabelMap(tensor=lbl_tensor)
     subject = tio.Subject(**kwargs)
@@ -440,7 +446,7 @@ def _measure_run(
     return dict(
         peak_ram_mb=peak_ram / 1024**2,
         peak_vram_mb=peak_vram / 1024**2,
-        time_s=elapsed,
+        time=elapsed,
     )
 
 
@@ -467,75 +473,77 @@ def benchmark(
     rows: List[Dict[str, Any]] = []
 
     for device in devices:
-        for ndim in NDIMS:
+        for dim in DIMS:
             print(f'\n{"=" * 60}')
-            print(f'Device: {device}  |  Dimensionality: {ndim.upper()}')
+            print(f'Device: {device}  |  Dimensionality: {dim}D')
             print(f'{"=" * 60}')
-            data = load_data(device, ndim)
+            data = load_data(device, dim)
             print(f'  data shape: {tuple(data["ct_data"].shape)}, '
                   f'labels shape: {tuple(data["labels"].shape)}, '
                   f'points shape: {tuple(data["points"].shape)}')
 
             for pipe_name, steps in PIPELINE_DEFS.items():
-                for data_mode in DATA_MODES:
+                for input_mode in INPUTS:
                     for lib_name, runner in LIBRARY_RUNNERS.items():
-                        # Skip unsupported data modes.
-                        if data_mode not in LIBRARY_DATA_MODES[lib_name]:
+                        # Skip unsupported inputs.
+                        if input_mode not in LIBRARY_INPUTS[lib_name]:
                             continue
                         # Skip unsupported dimensionalities.
-                        if ndim not in LIBRARY_NDIMS[lib_name]:
+                        if dim not in LIBRARY_DIMS[lib_name]:
                             continue
 
-                        label = (f'{lib_name} / {pipe_name} / {data_mode}'
-                                 f' / {ndim} / {device}')
+                        label = (f'{lib_name} / {pipe_name} / {input_mode}'
+                                 f' / {dim}D / {device}')
                         print(f'\n  {label}')
 
                         # ---- warmup ----
                         ok = True
+                        last_exc = None
                         for w in range(warmup):
                             try:
-                                runner(data, data_mode, device, ndim, steps)
+                                runner(data, dim, device, input_mode, steps)
                             except Exception as exc:
                                 print(f'    SKIP ({type(exc).__name__}: {exc})')
+                                last_exc = exc
                                 ok = False
                                 break
                         if not ok:
                             rows.append(dict(
-                                data_mode=data_mode,
                                 device=str(device),
-                                error=str(exc),
+                                dim=dim,
+                                error=str(last_exc),
+                                input=input_mode,
                                 library=lib_name,
-                                ndim=ndim,
                                 peak_ram_mb=None,
                                 peak_vram_mb=None,
                                 pipeline=pipe_name,
                                 run=None,
-                                time_s=None,
+                                time=None,
                             ))
                             continue
 
                         # ---- timed runs ----
                         for r in range(n_runs):
                             metrics = _measure_run(
-                                lambda _r=runner, _d=data, _dm=data_mode,
-                                       _dev=device, _nd=ndim, _s=steps:
-                                    _r(_d, _dm, _dev, _nd, _s),
+                                lambda _r=runner, _d=data, _dm=dim,
+                                       _dev=device, _im=input_mode, _s=steps:
+                                    _r(_d, _dm, _dev, _im, _s),
                                 device,
                             )
                             rows.append(dict(
-                                data_mode=data_mode,
                                 device=str(device),
+                                dim=dim,
                                 error=None,
+                                input=input_mode,
                                 library=lib_name,
-                                ndim=ndim,
                                 peak_ram_mb=round(metrics['peak_ram_mb'], 2),
                                 peak_vram_mb=round(metrics['peak_vram_mb'], 2),
                                 pipeline=pipe_name,
                                 run=r + 1,
-                                time_s=round(metrics['time_s'], 4),
+                                time=round(metrics['time'], 4),
                             ))
                             print(f'    run {r + 1}/{n_runs}: '
-                                  f'{metrics["time_s"]:.3f}s  '
+                                  f'{metrics["time"]:.3f}s  '
                                   f'RAM {metrics["peak_ram_mb"]:.1f} MB  '
                                   f'VRAM {metrics["peak_vram_mb"]:.1f} MB')
 
@@ -544,24 +552,24 @@ def benchmark(
 
 
 def print_summary(df: pd.DataFrame) -> None:
-    """Print aggregated stats grouped by library/pipeline/data_mode/ndim/device."""
-    successful = df.dropna(subset=['time_s'])
+    """Print aggregated stats grouped by library/pipeline/input/dim/device."""
+    successful = df.dropna(subset=['time'])
     if successful.empty:
         print('\nNo successful runs to summarise.')
         return
 
     summary = (
         successful
-        .groupby(['data_mode', 'device', 'library', 'ndim', 'pipeline'])
+        .groupby(['device', 'dim', 'input', 'library', 'pipeline'])
         .agg(
-            mean_time_s=('time_s', 'mean'),
-            n_runs=('time_s', 'count'),
+            mean_time=('time', 'mean'),
+            n_runs=('time', 'count'),
             peak_ram_mb=('peak_ram_mb', 'max'),
             peak_vram_mb=('peak_vram_mb', 'max'),
-            std_time_s=('time_s', 'std'),
+            std_time=('time', 'std'),
         )
         .reset_index()
-        .sort_values(['data_mode', 'device', 'ndim', 'pipeline', 'mean_time_s'])
+        .sort_values(['device', 'dim', 'input', 'pipeline', 'mean_time'])
     )
     print('\n=== Summary ===')
     print(summary.to_string(index=False))

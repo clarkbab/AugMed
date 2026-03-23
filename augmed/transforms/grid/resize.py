@@ -79,17 +79,8 @@ class RandomResize(RandomGridTransform):
         ) -> None:
         super().__init__(**kwargs)
         assert (size is not None or spacing is not None) and not (size is not None and spacing is not None), "Exactly one of 'size' or 'spacing' must be specified."
-        if size is not None:
-            size_range = expand_range_arg(size, dim=self._dim)
-            assert len(size_range) == 2 * self._dim, f"Expected 'size' of length {2 * self._dim} for dim={self._dim}, got length {len(size_range)}."
-            self.__size = to_tensor(size_range, dtype=torch.int32).reshape(self._dim, 2)
-            self.__spacing = None
-        if spacing is not None:
-            spacing_range = expand_range_arg(spacing, dim=self._dim)
-            assert len(spacing_range) == 2 * self._dim, f"Expected 'spacing_range' of length {2 * self._dim} for dim={self._dim}, got length {len(spacing_range)}."
-            self.__spacing = to_tensor(spacing_range).reshape(self._dim, 2)
-            self.__size = None
-
+        self.__size = size
+        self.__spacing = spacing
         super().set_params(
             self.__class__.__name__,
             size=self.__size,
@@ -97,16 +88,30 @@ class RandomResize(RandomGridTransform):
         )
 
     def freeze(self) -> 'Resize':
+        # Expand the range args.
+        # We do this now because 'set_dim' could be called after RandomResize.__init__.
+        if self.__size is not None:
+            size_range = expand_range_arg(self.__size, dim=self._dim)
+            assert len(size_range) == 2 * self._dim, f"Expected 'size' of length {2 * self._dim} for dim={self._dim}, got length {len(size_range)}."
+            size_range = to_tensor(size_range, dtype=torch.int32).reshape(self._dim, 2)
+            spacing_range = None
+        else:
+            spacing_range = expand_range_arg(self.__spacing, dim=self._dim)
+            assert len(spacing_range) == 2 * self._dim, f"Expected 'spacing_range' of length {2 * self._dim} for dim={self._dim}, got length {len(spacing_range)}."
+            spacing_range = to_tensor(spacing_range).reshape(self._dim, 2)
+            size_range = None
+
+        # Draw the resize parameters.
         should_apply = self._rng.random(1) < self._p
         if not should_apply:
             return Identity(dim=self._dim)
-        if self.__size is not None:
+        if size_range is not None:
             draw = to_tensor(self._rng.random(self._dim))
-            size_draw = (draw * (self.__size[:, 1] - self.__size[:, 0]) + self.__size[:, 0]).type(torch.int32)
+            size_draw = (draw * (size_range[:, 1] - size_range[:, 0]) + size_range[:, 0]).type(torch.int32)
             spacing_draw = None
-        if self.__spacing is not None:
+        else:
             draw = to_tensor(self._rng.random(self._dim))
-            spacing_draw = (draw * (self.__spacing[:, 1] - self.__spacing[:, 0]) + self.__spacing[:, 0])
+            spacing_draw = (draw * (spacing_range[:, 1] - spacing_range[:, 0]) + spacing_range[:, 0])
             size_draw = None
 
         params = dict(
@@ -118,6 +123,6 @@ class RandomResize(RandomGridTransform):
     def __str__(self) -> str:
         return super().__str__(
             self.__class__.__name__,
-            size=to_tuple(self.__size.flatten()) if self.__size is not None else None,
-            spacing=to_tuple(self.__spacing.flatten(), decimals=3) if self.__spacing is not None else None,
+            size=self.__size,
+            spacing=self.__spacing,
         )

@@ -4,6 +4,7 @@ import torch
 from typing import Tuple
 
 from ....typing import Number
+from ....utils.args import expand_range_arg
 from ....utils.conversion import to_tensor, to_tuple
 from ...identity import Identity
 from .affine import Affine, RandomAffine
@@ -47,15 +48,22 @@ class RandomTranslate(RandomAffine):
         )
         super().set_params(
             self.__class__.__name__,
-            translation=self._translation_range,
+            translation=self._translation,
         )
 
     def freeze(self) -> 'Translate':
+        # Expand the range args.
+        # We do this now because 'set_dim' could be called after RandomTranslate.__init__.
+        translation_range = expand_range_arg(self._translation, dim=self._dim, negate_lower=True)
+        assert len(translation_range) == 2 * self._dim, f"Expected 'translation' of length {2 * self._dim}, got {len(translation_range)}."
+        translation_range = to_tensor(translation_range).reshape(self._dim, 2)
+
+        # Draw the translation parameters.
         should_apply = self._rng.random(1) < self._p
         if not should_apply:
             return Identity(dim=self._dim)
         draw = to_tensor(self._rng.random(self._dim))
-        trans_draw = draw * (self._translation_range[:, 1] - self._translation_range[:, 0]) + self._translation_range[:, 0]
+        trans_draw = draw * (translation_range[:, 1] - translation_range[:, 0]) + translation_range[:, 0]
         params = dict(
             translation=trans_draw,
         )
@@ -64,5 +72,5 @@ class RandomTranslate(RandomAffine):
     def __str__(self) -> str:
         return super().super_str(
             self.__class__.__name__,
-            translation=to_tuple(self._translation_range.flatten(), decimals=3) if self._translation_range is not None else None,
+            translation=self._translation,
         )

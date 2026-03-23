@@ -433,46 +433,52 @@ class RandomElastic(RandomSpatialTransform):
         ) -> None:
         super().__init__(**kwargs)
         self.__method = method
-        control_spacing_range = expand_range_arg(control_spacing, dim=self._dim)
-        assert len(control_spacing_range) == 2 * self._dim, f"Expected 'control_spacing' of length {2 * self._dim}, got {len(control_spacing_range)}."
-        self.__control_spacing_range = to_tensor(control_spacing_range).reshape(self._dim, 2)
-        control_origin_range = expand_range_arg(control_origin, dim=self._dim, negate_lower=True)
-        assert len(control_origin_range) == 2 * self._dim, f"Expected 'control_origin' of length {2 * self._dim}, got {len(control_origin_range)}."
-        self.__control_origin_range = to_tensor(control_origin_range).reshape(self._dim, 2)
-        disp_range = expand_range_arg(displacement, dim=self._dim, negate_lower=True)
-        assert len(disp_range) == 2 * self._dim, f"Expected 'displacement' of length {2 * self._dim}, got {len(disp_range)}."
-        self.__disp_range = to_tensor(disp_range).reshape(self._dim, 2)
+        self.__control_spacing = control_spacing
+        self.__control_origin = control_origin
+        self.__displacement = displacement
         self.__use_batching = use_batching
         self.__batching_mem_p = batching_mem_p
         self.__n_iter_max = n_iter_max
-        self.__warn_folding()
         super().set_params(
             self.__class__.__name__,
             batching_mem_p=self.__batching_mem_p,
-            control_origin=self.__control_origin_range,
-            control_spacing=self.__control_spacing_range,
-            displacement=self.__disp_range,
+            control_origin=self.__control_origin,
+            control_spacing=self.__control_spacing,
+            displacement=self.__displacement,
             method=self.__method,
             n_iter_max=self.__n_iter_max,
             use_batching=self.__use_batching,
         )
 
     def freeze(self) -> 'Elastic':
+        # Expand the range args.
+        # We do this now because 'set_dim' could be called after RandomElastic.__init__.
+        control_spacing_range = expand_range_arg(self.__control_spacing, dim=self._dim)
+        assert len(control_spacing_range) == 2 * self._dim, f"Expected 'control_spacing' of length {2 * self._dim}, got {len(control_spacing_range)}."
+        control_spacing_range = to_tensor(control_spacing_range).reshape(self._dim, 2)
+        control_origin_range = expand_range_arg(self.__control_origin, dim=self._dim, negate_lower=True)
+        assert len(control_origin_range) == 2 * self._dim, f"Expected 'control_origin' of length {2 * self._dim}, got {len(control_origin_range)}."
+        control_origin_range = to_tensor(control_origin_range).reshape(self._dim, 2)
+        disp_range = expand_range_arg(self.__displacement, dim=self._dim, negate_lower=True)
+        assert len(disp_range) == 2 * self._dim, f"Expected 'displacement' of length {2 * self._dim}, got {len(disp_range)}."
+        disp_range = to_tensor(disp_range).reshape(self._dim, 2)
+
+        # Draw the elastic parameters.
         should_apply = self._rng.random(1) < self._p
         if not should_apply:
             return Identity(dim=self._dim)
         draw = to_tensor(self._rng.random(self._dim))
-        control_spacing_draw = draw * (self.__control_spacing_range[:, 1] - self.__control_spacing_range[:, 0]) + self.__control_spacing_range[:, 0]
-        control_origin_draw = draw * (self.__control_origin_range[:, 1] - self.__control_origin_range[:, 0]) + self.__control_origin_range[:, 0]
+        control_spacing_draw = draw * (control_spacing_range[:, 1] - control_spacing_range[:, 0]) + control_spacing_range[:, 0]
+        control_origin_draw = draw * (control_origin_range[:, 1] - control_origin_range[:, 0]) + control_origin_range[:, 0]
         # We can't draw displacements here as we need the image to determine the number of control points.
         # However, we should pass a randomly-drawn seed.
         seed_draw = self._rng.integers(1e9)   # Requires upper bound.
-        self.__warn_folding(control_spacing_draw)
+        self.__warn_folding(control_spacing_draw, disp_range)
         params = dict(
             batching_mem_p=self.__batching_mem_p,
             control_origin=control_origin_draw,
             control_spacing=control_spacing_draw,
-            displacement=self.__disp_range.flatten(),
+            displacement=disp_range.flatten(),
             method=self.__method,
             n_iter_max=self.__n_iter_max,
             seed=seed_draw,
@@ -484,18 +490,16 @@ class RandomElastic(RandomSpatialTransform):
         return super().__str__(
             self.__class__.__name__,
             batching_mem_p=self.__batching_mem_p,
-            control_origin=to_tuple(self.__control_origin_range.flatten(), decimals=3),
-            control_spacing=to_tuple(self.__control_spacing_range.flatten(), decimals=3),
-            displacement=to_tuple(self.__disp_range.flatten(), decimals=3),
+            control_origin=self.__control_origin,
+            control_spacing=self.__control_spacing,
+            displacement=self.__displacement,
             method=self.__method,
             n_iter_max=self.__n_iter_max,
             use_batching=self.__use_batching,
         )
 
-    def __warn_folding(self, control_spacing: torch.Tensor | None = None) -> None:
-        if control_spacing is None:
-            control_spacing, _ = self.__control_spacing_range.min(axis=1)
-        disp_widths = self.__disp_range[:, 1] - self.__disp_range[:, 0]
+    def __warn_folding(self, control_spacing, disp_range) -> None:
+        disp_widths = disp_range[:, 1] - disp_range[:, 0]
         if (disp_widths >= control_spacing).any():
             logger.warning(f"RandomElastic transforms with displacement widths ({to_tuple(disp_widths)}) >= "
                 f"control spacings ({to_tuple(control_spacing)}) may produce folding transforms. Such transforms may "

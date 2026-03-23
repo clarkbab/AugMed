@@ -201,87 +201,93 @@ class RandomPad(RandomGridTransform):
         ) -> None:
         super().__init__(**kwargs)
         assert add is not None or (centre is not None and margin is not None), "Must specify either 'add' or both 'centre' and 'margin'."
-        self.__symmetric = to_tensor(symmetric, broadcast=self._dim)
-        if add is not None:
-            # Handle pad from outside case.
+        self.__add = add
+        self.__centre = centre
+        self.__centre_offset = centre_offset
+        self.__margin = margin
+        self.__symmetric = symmetric
+        super().set_params(
+            self.__class__.__name__,
+            add=self.__add,
+            centre=self.__centre,
+            centre_offset=self.__centre_offset,
+            margin=self.__margin,
+            symmetric=self.__symmetric,
+        )
+
+    def freeze(self) -> 'Pad':
+        # Expand the range args.
+        # We do this now because 'set_dim' could be called after RandomPad.__init__.
+        symmetric = to_tensor(self.__symmetric, broadcast=self._dim)
+        if self.__add is not None:
             cr_vals_per_dim = 4
-            add_range = expand_range_arg(add, dim=self._dim, vals_per_dim=cr_vals_per_dim)
+            add_range = expand_range_arg(self.__add, dim=self._dim, vals_per_dim=cr_vals_per_dim)
             assert len(add_range) == cr_vals_per_dim * self._dim, f"Expected 'add' of length {cr_vals_per_dim * self._dim}, got {len(add_range)}."
 
             # Ensure pad ranges allow symmetry.
-            for i, s in enumerate(self.__symmetric):
+            for i, s in enumerate(symmetric):
                 cr_axis_vals = add_range[i * cr_vals_per_dim:(i + 1) * cr_vals_per_dim]
                 if s and (cr_axis_vals[0] != cr_axis_vals[2] or cr_axis_vals[1] != cr_axis_vals[3]):
                     raise ValueError(f"Cannot create symmetric pads for axis {i} with pad ranges {cr_axis_vals}.")
 
-            self.__add_range = to_tensor(add_range).reshape(self._dim, 2, 2)
-            # Should we zero out things that aren't relevant?
-            self.__centre = None
-            self.__margin_range = None
-            self.__centre_offset_range = None
+            add_range = to_tensor(add_range).reshape(self._dim, 2, 2)
+            centre = None
+            margin = None
+            centre_offset_range = None
         else:
-            # Handle pad from centre point and margin case.
             cmr_vals_per_dim = 4
-            margin_range = expand_range_arg(margin, dim=self._dim, vals_per_dim=cmr_vals_per_dim)
+            margin_range = expand_range_arg(self.__margin, dim=self._dim, vals_per_dim=cmr_vals_per_dim)
             assert len(margin_range) == cmr_vals_per_dim * self._dim, f"Expected 'margin' of length {cmr_vals_per_dim * self._dim}, got {len(margin_range)}."
 
             # Ensure pad margin ranges allow symmetry.
-            for i, s in enumerate(self.__symmetric):
+            for i, s in enumerate(symmetric):
                 cmr_axis_vals = margin_range[i * cmr_vals_per_dim:(i + 1) * cmr_vals_per_dim]
                 if s and (cmr_axis_vals[0] != cmr_axis_vals[2] or cmr_axis_vals[1] != cmr_axis_vals[3]):
                     raise ValueError(f"Cannot create symmetric pads for axis {i} with pad margin ranges {cmr_axis_vals}.")
 
-            self.__margin_range = to_tensor(margin_range).reshape(self._dim, 2, 2)
-            centre = arg_to_list(centre, (int, float, str), broadcast=self._dim)
+            margin = to_tensor(margin_range).reshape(self._dim, 2, 2)
+            centre = arg_to_list(self.__centre, (int, float, str), broadcast=self._dim)
             assert len(centre) == self._dim, f"Expected 'centre' of length {self._dim}, got {len(centre)}."
-            self.__centre = centre  # Can't be tensor as might have 'image-centre' str.
-            centre_offset_range = expand_range_arg(centre_offset, dim=self._dim, negate_lower=True)
+            centre_offset_range = expand_range_arg(self.__centre_offset, dim=self._dim, negate_lower=True)
             assert len(centre_offset_range) == 2 * self._dim, f"Expected 'centre_offset' of length {2 * self._dim}, got {len(centre_offset_range)}."
-            self.__centre_offset_range = to_tensor(centre_offset_range).reshape(self._dim, 2)
-            self.__add_range = None
+            centre_offset_range = to_tensor(centre_offset_range).reshape(self._dim, 2)
+            add_range = None
 
-        super().set_params(
-            self.__class__.__name__,
-            add=self.__add_range,
-            centre=self.__centre,
-            centre_offset=self.__centre_offset_range,
-            margin=self.__margin_range,
-        )
-
-    def freeze(self) -> 'Pad':
+        # Draw the pad parameters.
         should_apply = self._rng.random(1) < self._p
         if not should_apply:
             return Identity(dim=self._dim)
         draw = to_tensor(self._rng.random((self._dim, 2)))
-        if self.__add_range is not None:
-            add_draw = (draw * (self.__add_range[:, :, 1] - self.__add_range[:, :, 0]) + self.__add_range[:, :, 0])
+        if add_range is not None:
+            add_draw = (draw * (add_range[:, :, 1] - add_range[:, :, 0]) + add_range[:, :, 0])
             # Copy lower end of axis for symmetric pads.
-            sym_axes = torch.argwhere(self.__symmetric).flatten()
+            sym_axes = torch.argwhere(symmetric).flatten()
             add_draw[sym_axes, 1] = add_draw[sym_axes, 0]
             margin_draw = None
             centre_offset_draw = None
         else:
             add_draw = None
-            margin_draw = (draw * (self.__margin_range[:, :, 1] - self.__margin_range[:, :, 0]) + self.__margin_range[:, :, 0])
+            margin_draw = (draw * (margin[:, :, 1] - margin[:, :, 0]) + margin[:, :, 0])
             # Copy lower end of axis for symmetric pads.
-            sym_axes = torch.argwhere(self.__symmetric).flatten()
+            sym_axes = torch.argwhere(symmetric).flatten()
             margin_draw[sym_axes, 1] = margin_draw[sym_axes, 0]
             draw = to_tensor(self._rng.random(self._dim))
-            centre_offset_draw = (draw * (self.__centre_offset_range[:, 1] - self.__centre_offset_range[:, 0]) + self.__centre_offset_range[:, 0])
+            centre_offset_draw = (draw * (centre_offset_range[:, 1] - centre_offset_range[:, 0]) + centre_offset_range[:, 0])
 
         params = dict(
-            add=add_draw,
+            add=add_draw.flatten() if add_draw is not None else None,
             centre=self.__centre,
             centre_offset=centre_offset_draw,
-            margin=margin_draw,
+            margin=margin_draw.flatten() if margin_draw is not None else None,
         )
         return super().freeze(Pad, params)
 
     def __str__(self) -> str:
         return super().__str__(
             self.__class__.__name__,
-            add=to_tuple(self.__add_range.flatten(), decimals=3) if self.__add_range is not None else None,
-            centre=to_tuple(self.__centre, decimals=3),
-            centre_offset=to_tuple(self.__centre_offset_range.flatten(), decimals=3) if self.__centre_offset_range is not None else None,
-            margin=to_tuple(self.__margin_range.flatten(), decimals=3) if self.__margin_range is not None else None,
+            add=self.__add,
+            centre=self.__centre,
+            centre_offset=self.__centre_offset,
+            margin=self.__margin,
+            symmetric=self.__symmetric,
         )

@@ -54,20 +54,25 @@ class RandomFlip(RandomAffine):
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
-        p_flip = arg_to_list(p_flip, (int, float), broadcast=self._dim)
-        assert len(p_flip) == self._dim, f"Expected 'p_flip' of length {self._dim} for dim={self._dim}, got {len(p_flip)}."
-        self.__p_flip = to_tensor(p_flip)
+        self.__p_flip = p_flip
         super().set_params(
             self.__class__.__name__,
             p_flip=self.__p_flip,
         )
 
     def freeze(self) -> 'Flip':
+        # Expand the args.
+        # We do this now because 'set_dim' could be called after RandomFlip.__init__.
+        p_flip = arg_to_list(self.__p_flip, (int, float), broadcast=self._dim)
+        assert len(p_flip) == self._dim, f"Expected 'p_flip' of length {self._dim} for dim={self._dim}, got {len(p_flip)}."
+        p_flip = to_tensor(p_flip)
+
+        # Draw the flip parameters.
         should_apply = self._rng.random() < self._p
         if not should_apply:
             return Identity(dim=self._dim)
         draw = to_tensor(self._rng.random(self._dim))
-        flip_draw = draw < self.__p_flip
+        flip_draw = draw < p_flip
         t_frozen = Flip(flips=flip_draw)
         params = dict(
             flips=flip_draw,
@@ -77,5 +82,5 @@ class RandomFlip(RandomAffine):
     def __str__(self) -> str:
         return super().__str__(
             self.__class__.__name__,
-            p_flip=to_tuple(self.__p_flip, decimals=3),
+            p_flip=self.__p_flip,
         )

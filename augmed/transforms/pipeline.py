@@ -272,7 +272,7 @@ class FrozenPipeline(Transform):
                     points = resample_points_list[j].to(device)
 
                     # Perform resample.
-                    image_t = grid_sample(image_t, moving_affine, points.to(device))
+                    image_t = grid_sample(image_t, moving_affine, points.to(device), dim=self._dim)
 
             # Save resulting image.
             image_ts.append(image_t)

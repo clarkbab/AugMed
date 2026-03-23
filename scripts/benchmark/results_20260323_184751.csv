@@ -1,0 +1,121 @@
+device,dim,error,input,library,peak_ram_mb,peak_vram_mb,pipeline,run,time
+cpu,2,"shape '[2, 2]' is invalid for input of size 8",image,augmed,,,crop+affine+minmax,,
+cpu,2,,image,monai,0.04,0.0,crop+affine+minmax,1.0,0.0231
+cpu,2,,image,monai,0.03,0.0,crop+affine+minmax,2.0,0.0207
+cpu,2,,image,monai,0.03,0.0,crop+affine+minmax,3.0,0.0161
+cpu,2,"shape '[2, 2]' is invalid for input of size 8",image-labels,augmed,,,crop+affine+minmax,,
+cpu,2,,image-labels,monai,0.05,0.0,crop+affine+minmax,1.0,0.0261
+cpu,2,,image-labels,monai,0.05,0.0,crop+affine+minmax,2.0,0.0244
+cpu,2,,image-labels,monai,0.05,0.0,crop+affine+minmax,3.0,0.0242
+cpu,2,"shape '[2, 2]' is invalid for input of size 8",image-labels-points,augmed,,,crop+affine+minmax,,
+cpu,2,"shape '[2, 2]' is invalid for input of size 8",image,augmed,,,crop+affine+elastic+minmax,,
+cpu,2,,image,monai,0.6,0.0,crop+affine+elastic+minmax,1.0,0.0326
+cpu,2,,image,monai,0.6,0.0,crop+affine+elastic+minmax,2.0,0.0255
+cpu,2,,image,monai,0.6,0.0,crop+affine+elastic+minmax,3.0,0.0293
+cpu,2,"shape '[2, 2]' is invalid for input of size 8",image-labels,augmed,,,crop+affine+elastic+minmax,,
+cpu,2,,image-labels,monai,0.62,0.0,crop+affine+elastic+minmax,1.0,0.0511
+cpu,2,,image-labels,monai,0.62,0.0,crop+affine+elastic+minmax,2.0,0.0432
+cpu,2,,image-labels,monai,0.62,0.0,crop+affine+elastic+minmax,3.0,0.0408
+cpu,2,"shape '[2, 2]' is invalid for input of size 8",image-labels-points,augmed,,,crop+affine+elastic+minmax,,
+cpu,3,,image,augmed,0.02,0.0,crop+affine+minmax,1.0,0.6144
+cpu,3,,image,augmed,0.02,0.0,crop+affine+minmax,2.0,0.4651
+cpu,3,,image,augmed,0.02,0.0,crop+affine+minmax,3.0,0.4606
+cpu,3,,image,monai,0.03,0.0,crop+affine+minmax,1.0,0.2826
+cpu,3,,image,monai,0.04,0.0,crop+affine+minmax,2.0,0.2642
+cpu,3,,image,monai,0.03,0.0,crop+affine+minmax,3.0,0.2218
+cpu,3,,image,torchio,31.35,0.0,crop+affine+minmax,1.0,0.3128
+cpu,3,,image,torchio,31.35,0.0,crop+affine+minmax,2.0,0.1881
+cpu,3,,image,torchio,31.35,0.0,crop+affine+minmax,3.0,0.1941
+cpu,3,,image-labels,augmed,0.02,0.0,crop+affine+minmax,1.0,0.7781
+cpu,3,,image-labels,augmed,0.03,0.0,crop+affine+minmax,2.0,0.7306
+cpu,3,,image-labels,augmed,0.03,0.0,crop+affine+minmax,3.0,0.7242
+cpu,3,,image-labels,monai,0.05,0.0,crop+affine+minmax,1.0,0.3792
+cpu,3,,image-labels,monai,0.05,0.0,crop+affine+minmax,2.0,0.4282
+cpu,3,,image-labels,monai,0.05,0.0,crop+affine+minmax,3.0,0.4095
+cpu,3,,image-labels,torchio,31.35,0.0,crop+affine+minmax,1.0,0.2716
+cpu,3,,image-labels,torchio,31.35,0.0,crop+affine+minmax,2.0,0.2661
+cpu,3,,image-labels,torchio,31.35,0.0,crop+affine+minmax,3.0,0.3374
+cpu,3,,image-labels-points,augmed,0.03,0.0,crop+affine+minmax,1.0,0.7296
+cpu,3,,image-labels-points,augmed,0.03,0.0,crop+affine+minmax,2.0,0.7499
+cpu,3,,image-labels-points,augmed,0.03,0.0,crop+affine+minmax,3.0,0.7557
+cpu,3,,image,augmed,0.03,0.0,crop+affine+elastic+minmax,1.0,2.9132
+cpu,3,,image,augmed,0.03,0.0,crop+affine+elastic+minmax,2.0,3.1328
+cpu,3,,image,augmed,0.03,0.0,crop+affine+elastic+minmax,3.0,3.2664
+cpu,3,,image,monai,65.21,0.0,crop+affine+elastic+minmax,1.0,0.7464
+cpu,3,,image,monai,65.21,0.0,crop+affine+elastic+minmax,2.0,0.6763
+cpu,3,,image,monai,65.21,0.0,crop+affine+elastic+minmax,3.0,0.7239
+cpu,3,,image,torchio,31.35,0.0,crop+affine+elastic+minmax,1.0,0.7199
+cpu,3,,image,torchio,31.35,0.0,crop+affine+elastic+minmax,2.0,0.7405
+cpu,3,,image,torchio,31.35,0.0,crop+affine+elastic+minmax,3.0,0.6697
+cpu,3,,image-labels,augmed,0.03,0.0,crop+affine+elastic+minmax,1.0,3.3606
+cpu,3,,image-labels,augmed,0.03,0.0,crop+affine+elastic+minmax,2.0,3.2129
+cpu,3,,image-labels,augmed,0.03,0.0,crop+affine+elastic+minmax,3.0,3.205
+cpu,3,,image-labels,monai,65.23,0.0,crop+affine+elastic+minmax,1.0,0.9519
+cpu,3,,image-labels,monai,65.23,0.0,crop+affine+elastic+minmax,2.0,1.0922
+cpu,3,,image-labels,monai,65.23,0.0,crop+affine+elastic+minmax,3.0,1.0022
+cpu,3,,image-labels,torchio,31.36,0.0,crop+affine+elastic+minmax,1.0,1.276
+cpu,3,,image-labels,torchio,31.36,0.0,crop+affine+elastic+minmax,2.0,1.3202
+cpu,3,,image-labels,torchio,31.36,0.0,crop+affine+elastic+minmax,3.0,1.2928
+cpu,3,,image-labels-points,augmed,0.04,0.0,crop+affine+elastic+minmax,1.0,3.2553
+cpu,3,,image-labels-points,augmed,0.04,0.0,crop+affine+elastic+minmax,2.0,3.2821
+cpu,3,,image-labels-points,augmed,0.04,0.0,crop+affine+elastic+minmax,3.0,3.3387
+cuda,2,"shape '[2, 2]' is invalid for input of size 8",image,augmed,,,crop+affine+minmax,,
+cuda,2,,image,monai,0.03,0.32,crop+affine+minmax,1.0,0.0162
+cuda,2,,image,monai,0.03,0.32,crop+affine+minmax,2.0,0.0164
+cuda,2,,image,monai,0.03,0.32,crop+affine+minmax,3.0,0.0163
+cuda,2,"shape '[2, 2]' is invalid for input of size 8",image-labels,augmed,,,crop+affine+minmax,,
+cuda,2,,image-labels,monai,0.05,0.32,crop+affine+minmax,1.0,0.0252
+cuda,2,,image-labels,monai,0.05,0.32,crop+affine+minmax,2.0,0.0257
+cuda,2,,image-labels,monai,0.05,0.32,crop+affine+minmax,3.0,0.0204
+cuda,2,"shape '[2, 2]' is invalid for input of size 8",image-labels-points,augmed,,,crop+affine+minmax,,
+cuda,2,"shape '[2, 2]' is invalid for input of size 8",image,augmed,,,crop+affine+elastic+minmax,,
+cuda,2,,image,monai,0.6,0.32,crop+affine+elastic+minmax,1.0,0.0324
+cuda,2,,image,monai,0.6,0.32,crop+affine+elastic+minmax,2.0,0.0262
+cuda,2,,image,monai,0.6,0.32,crop+affine+elastic+minmax,3.0,0.0282
+cuda,2,"shape '[2, 2]' is invalid for input of size 8",image-labels,augmed,,,crop+affine+elastic+minmax,,
+cuda,2,,image-labels,monai,0.62,0.32,crop+affine+elastic+minmax,1.0,0.037
+cuda,2,,image-labels,monai,0.62,0.32,crop+affine+elastic+minmax,2.0,0.0375
+cuda,2,,image-labels,monai,0.62,0.32,crop+affine+elastic+minmax,3.0,0.0383
+cuda,2,"shape '[2, 2]' is invalid for input of size 8",image-labels-points,augmed,,,crop+affine+elastic+minmax,,
+cuda,3,,image,augmed,0.02,312.01,crop+affine+minmax,1.0,0.0942
+cuda,3,,image,augmed,0.02,312.01,crop+affine+minmax,2.0,0.0649
+cuda,3,,image,augmed,0.02,312.01,crop+affine+minmax,3.0,0.1018
+cuda,3,,image,monai,0.03,72.01,crop+affine+minmax,1.0,0.2882
+cuda,3,,image,monai,0.03,72.01,crop+affine+minmax,2.0,0.2727
+cuda,3,,image,monai,0.03,72.01,crop+affine+minmax,3.0,0.2193
+cuda,3,,image,torchio,31.35,72.01,crop+affine+minmax,1.0,0.1859
+cuda,3,,image,torchio,31.35,72.01,crop+affine+minmax,2.0,0.2092
+cuda,3,,image,torchio,31.35,72.01,crop+affine+minmax,3.0,0.181
+cuda,3,,image-labels,augmed,0.03,312.01,crop+affine+minmax,1.0,0.0964
+cuda,3,,image-labels,augmed,0.02,312.01,crop+affine+minmax,2.0,0.0898
+cuda,3,,image-labels,augmed,0.02,312.01,crop+affine+minmax,3.0,0.1071
+cuda,3,,image-labels,monai,0.05,72.01,crop+affine+minmax,1.0,0.3186
+cuda,3,,image-labels,monai,0.06,72.01,crop+affine+minmax,2.0,0.4929
+cuda,3,,image-labels,monai,0.05,72.01,crop+affine+minmax,3.0,0.3872
+cuda,3,,image-labels,torchio,31.35,72.01,crop+affine+minmax,1.0,0.2934
+cuda,3,,image-labels,torchio,31.35,72.01,crop+affine+minmax,2.0,0.254
+cuda,3,,image-labels,torchio,31.35,72.01,crop+affine+minmax,3.0,0.2921
+cuda,3,,image-labels-points,augmed,0.03,312.01,crop+affine+minmax,1.0,0.1006
+cuda,3,,image-labels-points,augmed,0.02,312.01,crop+affine+minmax,2.0,0.1035
+cuda,3,,image-labels-points,augmed,0.02,312.01,crop+affine+minmax,3.0,0.0997
+cuda,3,,image,augmed,0.03,13731.33,crop+affine+elastic+minmax,1.0,0.5349
+cuda,3,,image,augmed,0.03,13731.33,crop+affine+elastic+minmax,2.0,0.5054
+cuda,3,,image,augmed,0.03,13731.33,crop+affine+elastic+minmax,3.0,0.5266
+cuda,3,,image,monai,65.21,72.01,crop+affine+elastic+minmax,1.0,0.7675
+cuda,3,,image,monai,65.21,72.01,crop+affine+elastic+minmax,2.0,0.6157
+cuda,3,,image,monai,65.21,72.01,crop+affine+elastic+minmax,3.0,0.5816
+cuda,3,,image,torchio,31.35,72.01,crop+affine+elastic+minmax,1.0,0.695
+cuda,3,,image,torchio,31.35,72.01,crop+affine+elastic+minmax,2.0,0.6969
+cuda,3,,image,torchio,31.35,72.01,crop+affine+elastic+minmax,3.0,0.6447
+cuda,3,,image-labels,augmed,0.03,13731.33,crop+affine+elastic+minmax,1.0,0.5531
+cuda,3,,image-labels,augmed,0.03,13731.33,crop+affine+elastic+minmax,2.0,0.5145
+cuda,3,,image-labels,augmed,0.03,13731.33,crop+affine+elastic+minmax,3.0,0.5043
+cuda,3,,image-labels,monai,65.23,72.01,crop+affine+elastic+minmax,1.0,0.9878
+cuda,3,,image-labels,monai,65.23,72.01,crop+affine+elastic+minmax,2.0,0.8991
+cuda,3,,image-labels,monai,65.23,72.01,crop+affine+elastic+minmax,3.0,1.0595
+cuda,3,,image-labels,torchio,31.36,72.01,crop+affine+elastic+minmax,1.0,1.2977
+cuda,3,,image-labels,torchio,31.36,72.01,crop+affine+elastic+minmax,2.0,1.3031
+cuda,3,,image-labels,torchio,31.36,72.01,crop+affine+elastic+minmax,3.0,1.4136
+cuda,3,,image-labels-points,augmed,0.04,13763.33,crop+affine+elastic+minmax,1.0,0.5965
+cuda,3,,image-labels-points,augmed,0.04,13763.33,crop+affine+elastic+minmax,2.0,0.5943
+cuda,3,,image-labels-points,augmed,0.04,13763.33,crop+affine+elastic+minmax,3.0,0.6195

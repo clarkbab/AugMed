@@ -1,0 +1,81 @@
+data_mode,device,error,library,ndim,peak_ram_mb,peak_vram_mb,pipeline,run,time_s
+image,cpu,"Expected 3-5D image (3D spatial, optional batch/channel), got 2D for image 0.",augmed,2d,,,crop+affine+minmax,,
+image,cpu,No module named 'monai',monai,2d,,,crop+affine+minmax,,
+image,cpu,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,2d,,,crop+affine+minmax,,
+image-labels,cpu,"Expected 3-5D image (3D spatial, optional batch/channel), got 2D for image 0.",augmed,2d,,,crop+affine+minmax,,
+image-labels,cpu,No module named 'monai',monai,2d,,,crop+affine+minmax,,
+image-labels,cpu,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,2d,,,crop+affine+minmax,,
+image-labels-points,cpu,"Expected 3-5D image (3D spatial, optional batch/channel), got 2D for image 0.",augmed,2d,,,crop+affine+minmax,,
+image,cpu,"Expected 3-5D image (3D spatial, optional batch/channel), got 2D for image 0.",augmed,2d,,,crop+affine+elastic+minmax,,
+image,cpu,No module named 'monai',monai,2d,,,crop+affine+elastic+minmax,,
+image,cpu,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,2d,,,crop+affine+elastic+minmax,,
+image-labels,cpu,"Expected 3-5D image (3D spatial, optional batch/channel), got 2D for image 0.",augmed,2d,,,crop+affine+elastic+minmax,,
+image-labels,cpu,No module named 'monai',monai,2d,,,crop+affine+elastic+minmax,,
+image-labels,cpu,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,2d,,,crop+affine+elastic+minmax,,
+image-labels-points,cpu,"Expected 3-5D image (3D spatial, optional batch/channel), got 2D for image 0.",augmed,2d,,,crop+affine+elastic+minmax,,
+image,cpu,,augmed,3d,0.02,0.0,crop+affine+minmax,1.0,0.46
+image,cpu,,augmed,3d,0.02,0.0,crop+affine+minmax,2.0,0.4499
+image,cpu,,augmed,3d,0.02,0.0,crop+affine+minmax,3.0,0.4329
+image,cpu,No module named 'monai',monai,3d,,,crop+affine+minmax,,
+image,cpu,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,3d,,,crop+affine+minmax,,
+image-labels,cpu,,augmed,3d,0.02,0.0,crop+affine+minmax,1.0,0.734
+image-labels,cpu,,augmed,3d,0.02,0.0,crop+affine+minmax,2.0,0.7513
+image-labels,cpu,,augmed,3d,0.02,0.0,crop+affine+minmax,3.0,0.7166
+image-labels,cpu,No module named 'monai',monai,3d,,,crop+affine+minmax,,
+image-labels,cpu,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,3d,,,crop+affine+minmax,,
+image-labels-points,cpu,,augmed,3d,0.02,0.0,crop+affine+minmax,1.0,0.7849
+image-labels-points,cpu,,augmed,3d,0.02,0.0,crop+affine+minmax,2.0,0.7191
+image-labels-points,cpu,,augmed,3d,0.02,0.0,crop+affine+minmax,3.0,0.7285
+image,cpu,,augmed,3d,0.03,0.0,crop+affine+elastic+minmax,1.0,4.245
+image,cpu,,augmed,3d,0.03,0.0,crop+affine+elastic+minmax,2.0,3.3601
+image,cpu,,augmed,3d,0.03,0.0,crop+affine+elastic+minmax,3.0,3.0486
+image,cpu,No module named 'monai',monai,3d,,,crop+affine+elastic+minmax,,
+image,cpu,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,3d,,,crop+affine+elastic+minmax,,
+image-labels,cpu,,augmed,3d,0.03,0.0,crop+affine+elastic+minmax,1.0,3.2787
+image-labels,cpu,,augmed,3d,0.03,0.0,crop+affine+elastic+minmax,2.0,3.2785
+image-labels,cpu,,augmed,3d,0.03,0.0,crop+affine+elastic+minmax,3.0,3.2506
+image-labels,cpu,No module named 'monai',monai,3d,,,crop+affine+elastic+minmax,,
+image-labels,cpu,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,3d,,,crop+affine+elastic+minmax,,
+image-labels-points,cpu,,augmed,3d,0.04,0.0,crop+affine+elastic+minmax,1.0,3.343
+image-labels-points,cpu,,augmed,3d,0.04,0.0,crop+affine+elastic+minmax,2.0,3.2993
+image-labels-points,cpu,,augmed,3d,0.04,0.0,crop+affine+elastic+minmax,3.0,3.3311
+image,cuda,"Expected 3-5D image (3D spatial, optional batch/channel), got 2D for image 0.",augmed,2d,,,crop+affine+minmax,,
+image,cuda,No module named 'monai',monai,2d,,,crop+affine+minmax,,
+image,cuda,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,2d,,,crop+affine+minmax,,
+image-labels,cuda,"Expected 3-5D image (3D spatial, optional batch/channel), got 2D for image 0.",augmed,2d,,,crop+affine+minmax,,
+image-labels,cuda,No module named 'monai',monai,2d,,,crop+affine+minmax,,
+image-labels,cuda,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,2d,,,crop+affine+minmax,,
+image-labels-points,cuda,"Expected 3-5D image (3D spatial, optional batch/channel), got 2D for image 0.",augmed,2d,,,crop+affine+minmax,,
+image,cuda,"Expected 3-5D image (3D spatial, optional batch/channel), got 2D for image 0.",augmed,2d,,,crop+affine+elastic+minmax,,
+image,cuda,No module named 'monai',monai,2d,,,crop+affine+elastic+minmax,,
+image,cuda,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,2d,,,crop+affine+elastic+minmax,,
+image-labels,cuda,"Expected 3-5D image (3D spatial, optional batch/channel), got 2D for image 0.",augmed,2d,,,crop+affine+elastic+minmax,,
+image-labels,cuda,No module named 'monai',monai,2d,,,crop+affine+elastic+minmax,,
+image-labels,cuda,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,2d,,,crop+affine+elastic+minmax,,
+image-labels-points,cuda,"Expected 3-5D image (3D spatial, optional batch/channel), got 2D for image 0.",augmed,2d,,,crop+affine+elastic+minmax,,
+image,cuda,,augmed,3d,0.02,288.13,crop+affine+minmax,1.0,0.094
+image,cuda,,augmed,3d,0.02,288.13,crop+affine+minmax,2.0,0.1092
+image,cuda,,augmed,3d,0.02,288.13,crop+affine+minmax,3.0,0.0833
+image,cuda,No module named 'monai',monai,3d,,,crop+affine+minmax,,
+image,cuda,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,3d,,,crop+affine+minmax,,
+image-labels,cuda,,augmed,3d,0.02,288.13,crop+affine+minmax,1.0,0.0927
+image-labels,cuda,,augmed,3d,0.02,288.13,crop+affine+minmax,2.0,0.0826
+image-labels,cuda,,augmed,3d,0.02,288.13,crop+affine+minmax,3.0,0.1073
+image-labels,cuda,No module named 'monai',monai,3d,,,crop+affine+minmax,,
+image-labels,cuda,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,3d,,,crop+affine+minmax,,
+image-labels-points,cuda,,augmed,3d,0.02,288.13,crop+affine+minmax,1.0,0.1124
+image-labels-points,cuda,,augmed,3d,0.02,288.13,crop+affine+minmax,2.0,0.0932
+image-labels-points,cuda,,augmed,3d,0.02,288.13,crop+affine+minmax,3.0,0.1113
+image,cuda,,augmed,3d,0.03,13707.46,crop+affine+elastic+minmax,1.0,0.531
+image,cuda,,augmed,3d,0.03,13707.46,crop+affine+elastic+minmax,2.0,0.5143
+image,cuda,,augmed,3d,0.03,13707.46,crop+affine+elastic+minmax,3.0,0.5196
+image,cuda,No module named 'monai',monai,3d,,,crop+affine+elastic+minmax,,
+image,cuda,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,3d,,,crop+affine+elastic+minmax,,
+image-labels,cuda,,augmed,3d,0.03,13707.46,crop+affine+elastic+minmax,1.0,0.5577
+image-labels,cuda,,augmed,3d,0.03,13707.46,crop+affine+elastic+minmax,2.0,0.5345
+image-labels,cuda,,augmed,3d,0.03,13707.46,crop+affine+elastic+minmax,3.0,0.5013
+image-labels,cuda,No module named 'monai',monai,3d,,,crop+affine+elastic+minmax,,
+image-labels,cuda,"Bounds values must be integers greater or equal to zero, not ""(20.0,)"" of type <class 'float'>",torchio,3d,,,crop+affine+elastic+minmax,,
+image-labels-points,cuda,,augmed,3d,0.04,13715.58,crop+affine+elastic+minmax,1.0,0.5897
+image-labels-points,cuda,,augmed,3d,0.04,13715.58,crop+affine+elastic+minmax,2.0,0.5531
+image-labels-points,cuda,,augmed,3d,0.04,13715.58,crop+affine+elastic+minmax,3.0,0.5929
