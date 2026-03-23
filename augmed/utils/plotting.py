@@ -5,7 +5,7 @@ import seaborn as sns
 import torch
 from typing import Literal
 
-from ..typing import AffineMatrix3D, AffineMatrix3DArray, BatchLabelImage3DArray, ChannelLabelImage2D, ChannelLabelImage3D, Image2D, Image3D, LabelImage3DArray, Number, Orientation, Point3D, Points, Points3D, Points3DArray, Size3DArray
+from ..typing import Affine3D, Affine3DArray, BatchLabelImage3DArray, ChannelLabelImage2D, ChannelLabelImage3D, Image2D, Image3D, Number, Orientation, Points3D, Points3DArray, Size3DArray
 from .assertions import assert_orientation
 from .conversion import to_numpy
 from .geometry import foreground_fov_centre
@@ -150,8 +150,7 @@ def plot_slice(
 
 def plot_volume(
     data: Image3D,
-    affine: AffineMatrix3D | None = None,
-    centre: ChannelLabelImage3D | Point3D | str | None = None,
+    affine: Affine3D | None = None,
     cmap: str = 'gray',
     dose: Image3D | None = None,
     dose_alpha_min: float = 0.3,
@@ -159,7 +158,7 @@ def plot_volume(
     dose_cmap: str = 'turbo',
     dose_cmap_trunc: float = 0.15,
     figsize: tuple[float, float] = (16, 6),
-    idx: int | float | None = None,
+    idx: int | float | str | None = None,
     labels: ChannelLabelImage3D | None = None,
     orientation: Orientation = 'LPS',
     label_alpha: float = 0.3,
@@ -183,12 +182,10 @@ def plot_volume(
         if points.shape[0] == 0:
             logger.warn("Points array is empty. No points will be plotted.")
             points = None
-            if centre.startswith('points:'):
-                centre = None
+            if isinstance(idx, str) and idx.startswith('points:'):
+                idx = None
         else:
             assert points.shape[1] == 3, f"Expected points to have shape (N, 3) but got {points.shape}."
-    if not isinstance(centre, str):
-        centre = to_numpy(centre)
 
     # Resolve views.
     views = list(range(3)) if view == 'all' else (view if isinstance(view, list) else [view])
@@ -199,7 +196,7 @@ def plot_volume(
     axs = axs[0]
 
     for col_ax, v in zip(axs, views):
-        resolved_idx = _get_view_idx(v, data.shape, affine=affine, centre=centre, idx=idx, labels=labels, points=points)
+        resolved_idx = _get_view_idx(v, data.shape, affine=affine, idx=idx, labels=labels, points=points)
         image = _get_view_slice(v, data, resolved_idx)
         aspect = _get_view_aspect(v, affine)
         origin_x, origin_y = _get_view_origin(v, orientation=orientation)
@@ -290,50 +287,59 @@ def plot_volume(
 def _get_view_idx(
     view: int,
     size: Size3DArray,
-    idx: int | float | None = None,
-    affine: AffineMatrix3DArray | None = None,
-    centre: LabelImage3DArray | str | None = None,
+    affine: Affine3DArray | None = None,
+    idx: int | float | str | None = None,
     labels: BatchLabelImage3DArray | None = None,
     points: Points3DArray | None = None,
     ) -> int:
-    # Default to image centre if no idx or centre provided.
-    if idx is None and centre is None:
-        idx = 0.5
+    # Default to middle slice.
+    if idx is None:
+        idx = 'p:0.5'
 
-    # Fractional index.
-    if isinstance(idx, int):
-        return idx
-    elif isinstance(idx, float) and 0 <= idx <= 1:
-        idx = int(np.round(idx * (size[view] - 1)))
-        return idx
-
-    # Resolve string centre references (e.g. 'labels:0', 'points:3').
-    if isinstance(centre, str):
-        source, i = centre.split(':')
-        i = int(i)
-        if source == 'labels':
-            if labels is None:
-                raise ValueError(f"centre='{centre}' but no labels were provided.")
-            centre = foreground_fov_centre(labels[i], affine=affine)
-        elif source == 'points':
-            if points is None:
-                raise ValueError(f"centre='{centre}' but no points were provided.")
-            centre = points[i]
+    # Bare number: world coords if affine provided, voxel coords otherwise.
+    if isinstance(idx, (int, float)) and not isinstance(idx, bool):
+        if affine is not None:
+            spacing = affine_spacing(affine)
+            origin = affine_origin(affine)
+            vox = (idx - origin[view]) / spacing[view]
         else:
-            raise ValueError(f"Unknown centre '{source}'. Expected 'labels' or 'points'.")
-    elif isinstance(centre, np.ndarray):
-        centre = foreground_fov_centre(centre, affine=affine)
-    else:
-        raise ValueError(f"Invalid centre: {centre}. Expected a string reference, a label image, or a point.")
+            vox = idx
+        return int(np.clip(np.round(vox), 0, size[view] - 1))
 
-    # Convert to voxel coordinates.
+    # String prefixes.
+    if not isinstance(idx, str):
+        raise ValueError(f"Invalid idx: {idx}. Expected int, float, str, or None.")
+
+    source, value = idx.split(':')
+
+    # Proportion of field-of-view.
+    if source == 'p':
+        p = float(value)
+        return int(np.clip(np.round(p * (size[view] - 1)), 0, size[view] - 1))
+
+    # Voxel (image) index.
+    if source == 'i':
+        return int(np.clip(int(value), 0, size[view] - 1))
+
+    # Centre on label channel.
+    if source == 'labels':
+        if labels is None:
+            raise ValueError(f"idx='{idx}' but no labels were provided.")
+        centre = foreground_fov_centre(labels[int(value)], affine=affine)
+
+    # Centre on point.
+    elif source == 'points':
+        if points is None:
+            raise ValueError(f"idx='{idx}' but no points were provided.")
+        centre = points[int(value)]
+
+    else:
+        raise ValueError(f"Unknown idx prefix '{source}'. Expected 'p', 'i', 'labels', or 'points'.")
+
+    # Convert world coords to voxel coords.
     if affine is not None:
         spacing = affine_spacing(affine)
         origin = affine_origin(affine)
-        if centre is not None:
-            centre = (centre - origin) / spacing
+        centre = (centre - origin) / spacing
 
-    # Extract view index.
-    idx = int(np.clip(np.round(centre[view]), 0, size[view] - 1))
-
-    return idx
+    return int(np.clip(np.round(centre[view]), 0, size[view] - 1))

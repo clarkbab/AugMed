@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch
 
-from ..typing import AffineMatrix, Box, BoxTensor, LabelImage, Pixel, Point, Size, Voxel
+from ..typing import AffineMatrix, Box, BoxTensor, LabelImage, Pixel, Point, PointTensor, Points, PointsTensor, Size, Voxel
 from .conversion import to_numpy, to_tensor
 from .matrix import affine_origin, affine_spacing
 
@@ -134,3 +134,29 @@ def fov_width(
         fov_w = to_numpy(fov_w)
 
     return fov_w
+
+def to_image_coords(
+    point: PointTensor | PointsTensor,
+    affine: AffineMatrixTensor,
+    ) -> PixelTensor | PixelsTensor | VoxelTensor | VoxelsTensor:
+    point, return_type = to_tensor(point, return_type=True)
+    affine = to_tensor(affine, return_type=False)
+    spacing = affine_spacing(affine)
+    origin = affine_origin(affine)
+    point_im = torch.round((point - origin) / spacing).astype(torch.int32)
+    if return_type is np.ndarray:
+        point_im = to_numpy(point_im)
+    return point_im
+
+def to_world_coords(
+    point: PixelTensor | PixelsTensor | VoxelTensor | VoxelsTensor,
+    affine: AffineMatrixTensor,
+    ) -> PointTensor | PointsTensor:
+    point, return_type = to_tensor(point, return_type=True)
+    affine = to_tensor(affine, return_type=False)
+    spacing = affine_spacing(affine)
+    origin = affine_origin(affine)
+    point_w = point * spacing + origin
+    if return_type is np.ndarray:
+        point_w = to_numpy(point_w)
+    return point_w

@@ -190,16 +190,12 @@ class Crop(GridTransform):
 
             if affine is not None:
                 # Convert FOV from mm -> vox.
-                spacing = affine_spacing(affine)
-                origin = affine_origin(affine) 
-                fov_min = torch.round((fov_min - origin) / spacing)
-                fov_max = torch.round((fov_max - origin) / spacing)
+                fov_min = to_image_coords(fov_min, affine)
+                fov_max = to_image_coords(fov_max, affine)
 
                 # Convert 'crop_remove' from mm -> vox.
-                spacing = affine_spacing(affine)
-                origin = affine_origin(affine)
-                crop_remove_min = torch.round(crop_remove_min / spacing)
-                crop_remove_max = torch.round(crop_remove_max / spacing)
+                crop_remove_min = to_image_coords(crop_remove_min, affine)
+                crop_remove_max = to_image_coords(crop_remove_max, affine)
 
             # Get the new FOV.
             crop_min_vox = fov_min + crop_remove_min
@@ -217,9 +213,7 @@ class Crop(GridTransform):
 
             if affine is not None:
                 # Convert the crop centre from mm -> vox.
-                spacing = affine_spacing(affine)
-                origin = affine_origin(affine)
-                centre = torch.round((centre - origin) / spacing)
+                center = to_image_coords(centre, affine)
 
                 # Convert the crop margins from mm -> vox.
                 crop_margin_min = (spacing * crop_margin_min)

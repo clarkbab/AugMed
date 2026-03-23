@@ -75,16 +75,12 @@ class Pad(GridTransform):
 
             if affine is not None:
                 # Convert FOV from mm -> vox.
-                spacing = affine_spacing(affine)
-                origin = affine_origin(affine) 
-                fov_min = torch.round((fov_min - origin) / spacing)
-                fov_max = torch.round((fov_max - origin) / spacing)
+                fov_min = to_image_coords(fov_min, affine)
+                fov_max = to_image_coords(fov_max, affine)
 
                 # Convert 'pad_add' from mm -> vox.
-                spacing = affine_spacing(affine)
-                origin = affine_origin(affine)
-                pad_add_min = torch.round(pad_add_min / spacing)
-                pad_add_max = torch.round(pad_add_max / spacing)
+                pad_add_min = to_image_coords(pad_add_min, affine)
+                pad_add_max = to_image_coords(pad_add_max, affine)
 
             # Get the new FOV.
             pad_min_vox = fov_min - pad_add_min
@@ -107,8 +103,8 @@ class Pad(GridTransform):
             pad_max_mm = centre_mm + pad_margin_max_mm
 
             # Convert to voxels.
-            pad_min_vox = torch.round((pad_min_mm - origin) / spacing).type(torch.int32)
-            pad_max_vox = torch.round((pad_max_mm - origin) / spacing).type(torch.int32)
+            pad_min_vox = to_image_coords(pad_min_mm, affine)
+            pad_max_vox = to_image_coords(pad_max_mm, affine)
 
             # Truncate to true voxel coords.
             pad_min_vox = torch.clamp(pad_min_vox, 0)

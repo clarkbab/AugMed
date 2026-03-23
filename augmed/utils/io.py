@@ -1,16 +1,39 @@
 import json
+import nibabel as nib
 import numpy as np
+import nrrd
 import os
 import torch
-from typing import Any, List
+from typing import Any, List, Tuple
 import yaml
 
-from ..typing import FilePath, Image
+from ..typing import AffineMatrix3D, FilePath, Image3D
+from .args import arg_to_list
+
+def load_nifti(
+    filepath: FilePath,
+    **kwargs,
+    ) -> Tuple[Image3D, AffineMatrix3D]:
+    assert filepath.endswith('.nii') or filepath.endswith('.nii.gz'), "Filepath must end with .nii or .nii.gz"
+    img = nib.load(filepath)
+    data = img.get_fdata()
+    affine = img.affine
+    return data, affine
+
+def load_nrrd(
+    filepath: FilePath,
+    ) -> Tuple[Image3D, AffineMatrix3D]:
+    data, header = nrrd.read(filepath)
+    affine = np.zeros((4, 4), dtype=np.float32)
+    affine[:3, :3] = header['space directions']
+    affine[:3, 3] = header['space origin']
+    affine[3, 3] = 1.0
+    return data, affine
 
 def load_numpy(
-    filepath: str,
+    filepath: FilePath,
     keys: str | List[str] = 'data',
-    ) -> Image | List[Image]:
+    ) -> np.ndarray | List[np.ndarray]:
     assert filepath.endswith('.npy') or filepath.endswith('.npz'), "Filepath must end with .npy or .npz"
     data = np.load(filepath)
     if filepath.endswith('.npz'):
