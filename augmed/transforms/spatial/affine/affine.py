@@ -213,6 +213,16 @@ class Affine(SpatialTransform):
 
         return matrix
 
+    def __str__(self) -> str:
+        params = dict(
+            rotation=to_tuple(self._rotation, decimals=3) if self._rotation is not None else None,
+            rotation_centre=to_tuple(self._rotation_centre, decimals=3) if self._rotation_centre != 'image-centre' else "\"image-centre\"",
+            scaling=to_tuple(self._scaling, decimals=3) if self._scaling is not None else None,
+            scaling_centre=to_tuple(self._scaling_centre, decimals=3) if self._scaling_centre != 'image-centre' else "\"image-centre\"",
+            translation=to_tuple(self._translation, decimals=3) if self._translation is not None else None,
+        )
+        return super().__str__(self.__class__.__name__, params)
+
     def super_freeze(
         self,
         class_name: str,
@@ -226,16 +236,6 @@ class Affine(SpatialTransform):
         params: dict,
         ) -> str:
         return super().__str__(class_name, params)
-
-    def __str__(self) -> str:
-        params = dict(
-            rotation=to_tuple(self._rotation, decimals=3) if self._rotation is not None else None,
-            rotation_centre=to_tuple(self._rotation_centre, decimals=3) if self._rotation_centre != 'image-centre' else "\"image-centre\"",
-            scaling=to_tuple(self._scaling, decimals=3) if self._scaling is not None else None,
-            scaling_centre=to_tuple(self._scaling_centre, decimals=3) if self._scaling_centre != 'image-centre' else "\"image-centre\"",
-            translation=to_tuple(self._translation, decimals=3) if self._translation is not None else None,
-        )
-        return super().__str__(self.__class__.__name__, params)
 
     # This is for point clouds, not for image resampling. Note that this
     # requires invertibility of the back point transform, which may not be
@@ -383,20 +383,6 @@ class RandomAffine(RandomSpatialTransform):
         ) -> AffineTensor:
         return self.freeze().get_affine_transform(device, **kwargs)
 
-    def super_freeze(
-        self,
-        class_name: str,
-        params: dict,
-        ) -> str:
-        return super().freeze(class_name, params)
-
-    def super_str(
-        self,
-        class_name: str,
-        params: dict,
-        ) -> str:
-        return super().__str__(class_name, params)
-        
     def __str__(self) -> str:
         params = dict(
             rotation=to_tuple(self._rotation_range.flatten(), decimals=3) if self._rotation_range is not None else None,
@@ -406,3 +392,17 @@ class RandomAffine(RandomSpatialTransform):
             translation=to_tuple(self._translation_range.flatten(), decimals=3) if self._translation_range is not None else None,
         )
         return super().__str__(self.__class__.__name__, params)
+
+    def super_freeze(
+        self,
+        class_name: str,
+        params: dict,
+        ) -> str:
+        return super().freeze(class_name, params)
+        
+    def super_str(
+        self,
+        class_name: str,
+        params: dict,
+        ) -> str:
+        return super().__str__(class_name, params)

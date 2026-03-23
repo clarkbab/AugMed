@@ -56,59 +56,6 @@ class Elastic(SpatialTransform):
             use_batching=self.__use_batching,
         )
 
-    def __warn_folding(self, control_spacing: torch.Tensor | None = None) -> None:
-        if control_spacing is None:
-            control_spacing = self.__control_spacing
-        disp_widths = self.__disp_range[:, 1] - self.__disp_range[:, 0]
-        if (disp_widths >= control_spacing).any():
-            logger.warning(f"Elastic transforms with displacement widths ({to_tuple(disp_widths)}) >= "
-                f"control spacings ({to_tuple(control_spacing)}) may produce folding transforms. Such transforms may "
-                f"be non-invertible and could raise errors when performing forward points transform.")
-
-    def __estimate_bytes_per_point(self) -> int:
-        """Estimate peak GPU bytes per point for the interpolation hot loop."""
-        n = 4 if self.__method in ('cubic', 'bspline') else 2
-        d = self._dim
-        n_d = n ** d
-        # Key per-point tensors alive simultaneously (float32=4 bytes, int32=4 bytes):
-        # corners (int32): n^d * d * 4
-        # corner_disps (float32): n^d * d * 4
-        # V (float32): n^d * d * 4 (same memory as corner_disps after reshape, but separate during einsum)
-        # b (float32): n * d * 4
-        # corner_min, t, points_norm slices, disps, points_t: ~5 * d * 4
-        return (3 * n_d * d + n * d + 5 * d) * 4
-
-    def __get_n_batches(
-        self,
-        n_points: int,
-        device: torch.device,
-        ) -> int:
-        if self._debug:
-            print("=== Elastic.__get_n_batches (start) ===")
-        if device.type == 'cuda':
-            mem_total = torch.cuda.get_device_properties(device).total_memory
-            if self._debug:
-                print(f"Total GPU memory: {mem_total / (1024 ** 3):.2f} GB")
-            mem_budget = int(mem_total * self.__batching_mem_p)
-            if self._debug:
-                print(f"Allowing up to {mem_budget / (1024 ** 3):.2f} GB before applying batching.")
-            bpp = self.__estimate_bytes_per_point()
-            if self._debug:
-                print(f"Estimated bytes per point: {bpp} B.")
-            points_per_batch = max(mem_budget // bpp, 1)
-            if self._debug:
-                print(f"Processing {points_per_batch} points per batch.")
-            n_batches = max((n_points + points_per_batch - 1) // points_per_batch, 1)
-            if self._debug:
-                print(f"Total batches required: {n_batches}.")
-        else:
-            n_batches = 1
-
-        if self._debug:
-            print("=== Elastic.__get_n_batches (end) ===")
-
-        return n_batches
-
     def backward_transform_points(
         self,
         points: PointsTensor,
@@ -247,40 +194,7 @@ class Elastic(SpatialTransform):
             print("=== Elastic.backward_transform_points (end) ===")
 
         return points_t
-        
-    # Vectorised spatial hash over world-space control point coordinates.
-    # Reinterprets float32 coords as int32 bit patterns for hashing — deterministic
-    # as long as the same arithmetic path produces the coordinates.
-    # Returns draws in [0, 1) of shape (N, dim).
-    # Comp
-    def __control_grid_draws(
-        self,
-        points: PointsTensor,
-        ) -> PointsTensor:
-        bits = points.float().contiguous().view(torch.int32)
-        primes = (73856093, 19349663, 83492791)[:self._dim]
-        h = bits[..., 0].long() * primes[0]
-        for a in range(1, self._dim):
-            h = h ^ (bits[..., a].long() * primes[a])
-        h = h ^ self.__seed
 
-        # Generate dim independent draws by mixing h with a per-dimension offset.
-        draws = []
-        for d in range(self._dim):
-            hd = h ^ (d * 2654435761)
-            # Finalisation mix for better distribution.
-            hd = hd ^ (hd >> 16)
-            hd = (hd * 0x45d9f3b) & 0xFFFFFFFF
-            hd = hd ^ (hd >> 16)
-            draws.append((hd & 0x7FFFFFFF).float() / 0x7FFFFFFF)
-        return torch.stack(draws, dim=-1)
-
-    # This method returns the control point locations, displacements
-    # The control grid random displacements must not change depending on the passed points.
-    # That is, if we pass the point (0.5, 0.5, 0.5) this must give the same transformed
-    # point regardless of the other points we pass.
-    # This means that subsequent calls to transform_points and backward_transform_points
-    # will align points and images properly.
     def control_grid(
         self,
         points: PointsTensor,
@@ -321,6 +235,83 @@ class Elastic(SpatialTransform):
         
         return cp_disps, cp_affine
 
+    def __control_grid_draws(
+        self,
+        points: PointsTensor,
+        ) -> PointsTensor:
+        bits = points.float().contiguous().view(torch.int32)
+        primes = (73856093, 19349663, 83492791)[:self._dim]
+        h = bits[..., 0].long() * primes[0]
+        for a in range(1, self._dim):
+            h = h ^ (bits[..., a].long() * primes[a])
+        h = h ^ self.__seed
+
+        # Generate dim independent draws by mixing h with a per-dimension offset.
+        draws = []
+        for d in range(self._dim):
+            hd = h ^ (d * 2654435761)
+            # Finalisation mix for better distribution.
+            hd = hd ^ (hd >> 16)
+            hd = (hd * 0x45d9f3b) & 0xFFFFFFFF
+            hd = hd ^ (hd >> 16)
+            draws.append((hd & 0x7FFFFFFF).float() / 0x7FFFFFFF)
+        return torch.stack(draws, dim=-1)
+
+    def __estimate_bytes_per_point(self) -> int:
+        """Estimate peak GPU bytes per point for the interpolation hot loop."""
+        n = 4 if self.__method in ('cubic', 'bspline') else 2
+        d = self._dim
+        n_d = n ** d
+        # Key per-point tensors alive simultaneously (float32=4 bytes, int32=4 bytes):
+        # corners (int32): n^d * d * 4
+        # corner_disps (float32): n^d * d * 4
+        # V (float32): n^d * d * 4 (same memory as corner_disps after reshape, but separate during einsum)
+        # b (float32): n * d * 4
+        # corner_min, t, points_norm slices, disps, points_t: ~5 * d * 4
+        return (3 * n_d * d + n * d + 5 * d) * 4
+        
+    # Vectorised spatial hash over world-space control point coordinates.
+    # Reinterprets float32 coords as int32 bit patterns for hashing — deterministic
+    # as long as the same arithmetic path produces the coordinates.
+    # Returns draws in [0, 1) of shape (N, dim).
+    # Comp
+    def __get_n_batches(
+        self,
+        n_points: int,
+        device: torch.device,
+        ) -> int:
+        if self._debug:
+            print("=== Elastic.__get_n_batches (start) ===")
+        if device.type == 'cuda':
+            mem_total = torch.cuda.get_device_properties(device).total_memory
+            if self._debug:
+                print(f"Total GPU memory: {mem_total / (1024 ** 3):.2f} GB")
+            mem_budget = int(mem_total * self.__batching_mem_p)
+            if self._debug:
+                print(f"Allowing up to {mem_budget / (1024 ** 3):.2f} GB before applying batching.")
+            bpp = self.__estimate_bytes_per_point()
+            if self._debug:
+                print(f"Estimated bytes per point: {bpp} B.")
+            points_per_batch = max(mem_budget // bpp, 1)
+            if self._debug:
+                print(f"Processing {points_per_batch} points per batch.")
+            n_batches = max((n_points + points_per_batch - 1) // points_per_batch, 1)
+            if self._debug:
+                print(f"Total batches required: {n_batches}.")
+        else:
+            n_batches = 1
+
+        if self._debug:
+            print("=== Elastic.__get_n_batches (end) ===")
+
+        return n_batches
+
+    # This method returns the control point locations, displacements
+    # The control grid random displacements must not change depending on the passed points.
+    # That is, if we pass the point (0.5, 0.5, 0.5) this must give the same transformed
+    # point regardless of the other points we pass.
+    # This means that subsequent calls to transform_points and backward_transform_points
+    # will align points and images properly.
     def __str__(self) -> str:
         params = dict(
             control_origin=to_tuple(self.__control_origin, decimals=3),
@@ -409,6 +400,15 @@ class Elastic(SpatialTransform):
             other_data.append(indiceses)
         results = to_return_format(points_ts, other_data=other_data, return_single=points_was_single, return_types=return_types)
         return results
+
+    def __warn_folding(self, control_spacing: torch.Tensor | None = None) -> None:
+        if control_spacing is None:
+            control_spacing = self.__control_spacing
+        disp_widths = self.__disp_range[:, 1] - self.__disp_range[:, 0]
+        if (disp_widths >= control_spacing).any():
+            logger.warning(f"Elastic transforms with displacement widths ({to_tuple(disp_widths)}) >= "
+                f"control spacings ({to_tuple(control_spacing)}) may produce folding transforms. Such transforms may "
+                f"be non-invertible and could raise errors when performing forward points transform.")
 
 class RandomElastic(RandomSpatialTransform):
     def __init__(

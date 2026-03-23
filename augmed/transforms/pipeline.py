@@ -83,15 +83,6 @@ class FrozenPipeline(Transform):
         return points_t
 
     # Gives us "pipeline[i]" access to transforms.
-    def __getitem__(
-        self,
-        i: int,
-        ) -> Transform:
-        return self.__transforms[i]
-
-    # Groups transforms by type (intensity vs. grid/spatial).
-    # This is because we can "backward_transform_points" through a whole
-    # group before performing a single resample.
     def __get_transform_groups(
         self,
         ) -> List[List[Transform]]:
@@ -125,7 +116,9 @@ class FrozenPipeline(Transform):
 
         return transform_groups
 
-    # Returns input/output grid params for all transform groups.
+    # Groups transforms by type (intensity vs. grid/spatial).
+    # This is because we can "backward_transform_points" through a whole
+    # group before performing a single resample.
     def __get_transform_groups_grid_params(
         self,
         grid: SamplingGridTensor,
@@ -167,6 +160,13 @@ class FrozenPipeline(Transform):
             grid_groups.append(grid_group)
 
         return grid_groups
+
+    # Returns input/output grid params for all transform groups.
+    def __getitem__(
+        self,
+        i: int,
+        ) -> Transform:
+        return self.__transforms[i]
 
     def __resolve_affine_chain(
         self,

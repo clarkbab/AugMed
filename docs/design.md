@@ -1,8 +1,6 @@
 ## Design decisions
 
 TODO:
-- Convert transform_points methods to take points or list of points.
-  - Have updated Affine/Pipeline/Transform. Complete for other transforms.
 - Benchmark in comparison with other libraries: torchio, albumentations, monai, torchvision.
 - Create test suite.
 - Get some alpha/beta testing.

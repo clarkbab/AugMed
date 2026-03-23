@@ -25,8 +25,8 @@ class MinMax(IntensityTransform):
 
     def __str__(self) -> str:
         params = dict(
-            max=round(self.__max.item(), 3),
-            min=round(self.__min.item(), 3),
+            max=round(self.__max, 3),
+            min=round(self.__min, 3),
         )
         return super().__str__(self.__class__.__name__, params)
 
@@ -69,8 +69,8 @@ class RandomMinMax(RandomIntensityTransform):
         min_draw = draw[0] * (self.__min_range[1] - self.__min_range[0]) + self.__min_range[0]
         max_draw = draw[0] * (self.__max_range[1] - self.__max_range[0]) + self.__max_range[0]
         params = dict(
-            max=max_draw,
-            min=min_draw,
+            max=max_draw.item(),
+            min=min_draw.item(),
         )
         return super().freeze(MinMax, params)
 
