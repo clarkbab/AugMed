@@ -3,10 +3,10 @@ import numpy as np
 import os
 from typing import Tuple
 
-from ..typing import Affine3D, Image3D, LabelImage3D, Points3D
+from ..typing import AffineMatrix3D, Image3D, LabelImage3D, Points3D
 from ..utils.io import load_nifti, load_numpy
 
-def load_example_ct() -> Tuple[Image3D, Affine3D, LabelImage3D, Points3D]:
+def load_example_ct() -> Tuple[Image3D, AffineMatrix3D, LabelImage3D, Points3D]:
     data_dir = files("augmed.data")
     filepath = os.path.join(data_dir, "example_ct.nii.gz")
     image, affine = load_nifti(filepath)

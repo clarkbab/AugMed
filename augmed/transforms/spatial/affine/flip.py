@@ -2,11 +2,11 @@ import numpy as np
 import torch
 from typing import Literal, Tuple
 
-from ....typing import Affine, Number, Point, SpatialDim
+from ....typing import AffineMatrix, Number, Point, SpatialDim
 from ....utils.args import alias_kwargs, arg_to_list
 from ....utils.conversion import to_tensor, to_tuple
 from ...identity import Identity
-from ..spatial import RandomSpatialTransform
+from .affine import Affine, RandomAffine
         
 class Flip(Affine):
     @alias_kwargs([
@@ -47,7 +47,7 @@ class Flip(Affine):
         return super().super_str(self.__class__.__name__, params)
 
 # This might not be a random affine, which expects a scaling range.
-class RandomFlip(RandomSpatialTransform):
+class RandomFlip(RandomAffine):
     def __init__(
         self,
         p_flip: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 0.5,

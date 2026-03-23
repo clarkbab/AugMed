@@ -2,12 +2,12 @@ import numpy as np
 import torch
 from typing import List, Literal, Tuple
 
-from ...typing import Affine, Indices, Number, Points, SamplingGridTensor, Size
-from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg
-from ...utils.conversion import to_tensor
+from ...typing import AffineMatrix, Indices, Number, Points, SamplingGridTensor, Size
+from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg, to_tuple
+from ...utils.conversion import to_return_format, to_tensor
 from ...utils.geometry import fov, fov_centre
 from ...utils.matrix import affine_origin, affine_spacing, create_affine
-from ..identity import Identity
+from ..identity import Identity, get_group_device
 from .grid import GridTransform, RandomGridTransform
 
 class Pad(GridTransform):
@@ -137,7 +137,7 @@ class Pad(GridTransform):
         self,
         points: Points | List[Points],
         # Can a pad ever move points offgrid??
-        affine: Affine | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
+        affine: AffineMatrix | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool = True,
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,

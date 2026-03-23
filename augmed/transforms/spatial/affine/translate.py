@@ -3,10 +3,10 @@ import torch
 import torch
 from typing import Tuple
 
-from ....typing import Affine, Number
+from ....typing import Number
 from ....utils.conversion import to_tensor, to_tuple
 from ...identity import Identity
-from .affine import RandomAffine
+from .affine import Affine, RandomAffine
 
 class Translate(Affine):
     def __init__(

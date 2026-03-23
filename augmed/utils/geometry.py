@@ -2,13 +2,13 @@ import numpy as np
 import torch
 import torch
 
-from ..typing import Affine, Box, BoxTensor, LabelImage, Pixel, Point, Size, Voxel
+from ..typing import AffineMatrix, Box, BoxTensor, LabelImage, Pixel, Point, Size, Voxel
 from .conversion import to_numpy, to_tensor
 from .matrix import affine_origin, affine_spacing
 
 def foreground_fov(
     data: LabelImage,
-    affine: Affine | None = None,
+    affine: AffineMatrix | None = None,
     ) -> Box | None:
     data, return_type = to_tensor(data, return_type=True)
     if data.sum() == 0:
@@ -37,7 +37,7 @@ def foreground_fov(
 
 def foreground_fov_centre(
     data: LabelImage,
-    affine: Affine | None = None,
+    affine: AffineMatrix | None = None,
     **kwargs,
     ) -> Point | Pixel | Voxel | None:
     data, return_type = to_tensor(data, return_type=True)
@@ -74,7 +74,7 @@ def foreground_fov_width(
 
 def fov(
     size: Size,
-    affine: Affine | None = None,
+    affine: AffineMatrix | None = None,
     ) -> BoxTensor:
     size, return_type = to_tensor(size, return_type=True)
 
@@ -99,7 +99,7 @@ def fov(
 
 def fov_centre(
     size: Size,
-    affine: Affine | None = None,
+    affine: AffineMatrix | None = None,
     **kwargs,
     ) -> Point | Pixel | Voxel:
     size, return_type = to_tensor(size, return_type=True)
@@ -119,7 +119,7 @@ def fov_centre(
 
 def fov_width(
     size: Size,
-    affine: Affine | None = None,
+    affine: AffineMatrix | None = None,
     **kwargs,
     ) -> Size:
     size, return_type = to_tensor(size, return_type=True)

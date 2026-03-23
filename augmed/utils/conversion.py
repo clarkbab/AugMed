@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from typing import List, Tuple
 
-from ..typing import Affine, Image, Number, Points, TransformParams
+from ..typing import AffineMatrix, Image, Number, Points, TransformParams
 from .python import delegates_to
 
 def to_numpy(
@@ -47,7 +47,7 @@ def to_return_format(
     data: Points | List[Image],
     return_single: bool = True,
     return_types: type | List[type] | None = None,
-    other_data: List[Affine | TransformParams] | None = None,
+    other_data: List[AffineMatrix | TransformParams] | None = None,
 ) -> Image | Points | List[Image | Points]:
     # Can't use "arg_to_list" because of circular dependencies.
     if isinstance(data, (np.ndarray, torch.Tensor)):

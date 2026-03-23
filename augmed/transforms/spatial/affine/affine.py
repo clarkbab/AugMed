@@ -3,12 +3,12 @@ import torch
 import torch
 from typing import List, Literal, Tuple
 
-from ....typing import Affine, AffineTensor, Indices, Number, Point, Points, PointsTensor, SamplingGrid, Size
+from ....typing import AffineMatrix, AffineMatrixTensor, Indices, Number, Point, Points, PointsTensor, SamplingGrid, Size
 from ....utils.args import alias_kwargs, arg_to_list, expand_range_arg
-from ....utils.conversion import to_tensor, to_tuple
+from ....utils.conversion import to_return_format, to_tensor, to_tuple
 from ....utils.geometry import fov_centre
 from ....utils.matrix import create_eye, create_rotation, create_scaling, create_translation
-from ..spatial import RandomSpatialTransform, SpatialTransform
+from ..spatial import RandomSpatialTransform, SpatialTransform, get_group_device
 
 # Flip, Rotation, Translation (and others) should probably subclass this.
 class Affine(SpatialTransform):
@@ -114,7 +114,7 @@ class Affine(SpatialTransform):
         device: torch.device,
         grid: SamplingGrid | None = None,   # Required for 'image-centre' rotation/scale.
         **kwargs,
-        ) -> AffineTensor:
+        ) -> AffineMatrixTensor:
         # Get rotation matrices.
         if self._rotation is not None:
             # Get centre of rotation.
@@ -167,7 +167,7 @@ class Affine(SpatialTransform):
         device: torch.device,   # Can't infer from 'grid' as it might be None.
         grid: SamplingGrid | None = None,   # Required for 'image-centre' rotation/scale.
         **kwargs,
-        ) -> AffineTensor:
+        ) -> AffineMatrixTensor:
         # Get rotation matrices.
         if self._rotation is not None:
             # Get centre of rotation.
@@ -245,7 +245,7 @@ class Affine(SpatialTransform):
     def transform_points(
         self,
         points: Points | List[Points],
-        affine: Affine | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
+        affine: AffineMatrix | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool = True,
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
@@ -382,7 +382,7 @@ class RandomAffine(RandomSpatialTransform):
         self,
         device: torch.device,
         **kwargs,
-        ) -> AffineTensor:
+        ) -> AffineMatrixTensor:
         return self.freeze().get_affine_transform(device, **kwargs)
 
     def __str__(self) -> str:

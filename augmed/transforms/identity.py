@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from typing import List
 
-from ..typing import Affine, Image, Indices, Points
+from ..typing import AffineMatrix, Image, Indices, Points
 from ..utils.args import arg_to_list
 from ..utils.conversion import to_return_format, to_tensor
 from ..utils.misc import get_group_device
@@ -15,9 +15,9 @@ class Identity(Transform):
     def transform_images(
         self,
         image: Image | List[Image],
-        affine: Affine | None = None,
+        affine: AffineMatrix | None = None,
         return_affine: bool = False,
-        ) -> Image | List[Image | Affine]:
+        ) -> Image | List[Image | AffineMatrix]:
         # Add affine to appease the API.
         other_data = []
         if return_affine:

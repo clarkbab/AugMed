@@ -39,7 +39,7 @@ import ast
 from pathlib import Path
 import re
 import sys
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 SKIP_PATTERNS = {'__pycache__', '.egg-info', 'node_modules', '.git', '.venv', 'venv'}
 
@@ -534,6 +534,16 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
     # __init__.py files use star imports for re-exporting — don't touch them.
     is_init = file_path.name == '__init__.py'
 
+    # --- Phase 0: Separate __future__ imports (always preserved) ---
+    future_imports: List[_Import] = []
+    non_future: List[_Import] = []
+    for imp in parsed:
+        if imp.is_from and not imp.is_relative and imp.module == '__future__':
+            future_imports.append(imp)
+        else:
+            non_future.append(imp)
+    parsed = non_future
+
     # --- Phase 1: Expand star imports ---
     expanded: List[_Import] = []
     for imp in parsed:
@@ -640,7 +650,77 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
             deduped.append(imp)
     cleaned = deduped
 
-    # --- Phase 4: Sort names within each import ---
+    # --- Phase 3b: Add missing imports for used-but-not-imported names ---
+    # After star expansion, some names used in the body may not be covered
+    # by any import (e.g. the original file had an explicit partial list
+    # instead of ``*``).  For each relative import already present, check
+    # if its source module provides additional names that the body needs.
+    if not is_init:
+        already_imported: Set[str] = set()
+        for imp in cleaned:
+            if not imp.is_from or imp.is_star:
+                name = imp.alias or imp.names[0][0].split('.')[0]
+                already_imported.add(name)
+            else:
+                for name, asname in imp.names:
+                    already_imported.add(asname or name)
+
+        missing = used_names - already_imported
+        if missing:
+            # Build a map: module -> set of available names.
+            module_available: Dict[str, Set[str]] = {}
+            for imp in cleaned:
+                if not imp.is_from or not imp.is_relative:
+                    continue
+                key = imp.full_module
+                if key not in module_available:
+                    mod_path = _resolve_module_path(key, file_path)
+                    if mod_path:
+                        module_available[key] = _public_names_from_file(mod_path)
+
+            # For each missing name, find a module that provides it and
+            # add it to that import.
+            for key, available in module_available.items():
+                to_add = missing & available
+                if not to_add:
+                    continue
+                # Find the corresponding import and extend it.
+                for i, imp in enumerate(cleaned):
+                    if imp.is_from and imp.full_module == key:
+                        new_names = list(imp.names) + [(n, None) for n in to_add]
+                        cleaned[i] = _Import(
+                            is_from=True,
+                            module=imp.module,
+                            level=imp.level,
+                            names=new_names,
+                            alias=None,
+                            raw=imp.raw,
+                        )
+                        missing -= to_add
+                        break
+
+            # Also check stdlib / third-party modules for remaining missing names.
+            if missing:
+                for imp in cleaned:
+                    if not imp.is_from or imp.is_relative:
+                        continue
+                    mod_name = imp.module or ''
+                    if mod_name not in module_available:
+                        module_available[mod_name] = _public_names_from_module(mod_name)
+                    to_add = missing & module_available[mod_name]
+                    if not to_add:
+                        continue
+                    new_names = list(imp.names) + [(n, None) for n in to_add]
+                    idx = cleaned.index(imp)
+                    cleaned[idx] = _Import(
+                        is_from=True,
+                        module=imp.module,
+                        level=imp.level,
+                        names=new_names,
+                        alias=None,
+                        raw=imp.raw,
+                    )
+                    missing -= to_add
     for imp in cleaned:
         if imp.is_from and not imp.is_star:
             imp.names = _sort_imported_names(imp.names)
@@ -657,8 +737,12 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
     external.sort(key=_external_sort_key)
     relative.sort(key=_relative_sort_key)
 
-    # --- Phase 5: Reconstruct the import block ---
+    # --- Phase 6: Reconstruct the import block ---
     new_lines: List[str] = []
+    for imp in future_imports:
+        new_lines.append(_format_import(imp))
+    if future_imports and (external or relative):
+        new_lines.append('')
     for imp in external:
         new_lines.append(_format_import(imp))
     if external and relative:

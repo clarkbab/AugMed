@@ -4,12 +4,12 @@ import torch
 import torch
 from typing import Tuple
 
-from ..typing import Affine, AffineTensor, Number, Point, PointTensor, Spacing, SpatialDim
+from ..typing import AffineMatrix, AffineMatrixTensor, Number, Point, PointTensor, Spacing, SpatialDim
 from .args import arg_to_list
 from .conversion import to_numpy, to_tensor
 
 def affine_origin(
-    affine: AffineTensor,
+    affine: AffineMatrix,
     ) -> PointTensor:
     affine, return_type = to_tensor(affine, return_type=True)
 
@@ -27,8 +27,8 @@ def affine_origin(
     return origin
 
 def affine_spacing(
-    affine: Affine,
-    ) -> Affine:
+    affine: AffineMatrix,
+    ) -> AffineMatrix:
     affine, return_type = to_tensor(affine, return_type=True)
 
     # Get spacing.
@@ -50,7 +50,7 @@ def create_affine(
     origin: Point,
     device: torch.device = torch.device('cpu'),
     dtype: torch.dtype = torch.float32,
-    ) -> AffineTensor:
+    ) -> AffineMatrixTensor:
     dim = len(spacing)
     affine = create_eye(dim, device=device, dtype=dtype)
     if dim == 2:

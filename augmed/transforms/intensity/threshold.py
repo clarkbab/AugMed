@@ -2,7 +2,7 @@ import torch
 from typing import Tuple
 
 from ...typing import ImageTensor, Number
-from ..identity import Identity
+from ..identity import Identity, to_tensor
 from .intensity import IntensityTransform, RandomIntensityTransform
 
 # Min:

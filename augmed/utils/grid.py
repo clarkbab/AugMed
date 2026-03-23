@@ -2,7 +2,7 @@ import torch
 import torch
 from typing import Literal
 
-from ..typing import AffineTensor, ImageTensor, Number, PointsTensor, SizeTensor, SpatialDim
+from ..typing import AffineMatrixTensor, ImageTensor, Number, PointsTensor, SizeTensor, SpatialDim
 from ..utils.conversion import to_tensor
 from ..utils.matrix import affine_origin, affine_spacing
 
@@ -13,7 +13,7 @@ from ..utils.matrix import affine_origin, affine_spacing
 # image (image) and the coordinates of the moving image grid (affine).
 def grid_sample(
     image: ImageTensor,
-    affine: AffineTensor,
+    affine: AffineMatrixTensor,
     points: PointsTensor | ImageTensor,
     mode: Literal['bicubic', 'bilinear', 'nearest'] = 'bilinear',
     padding: Number | Literal['border', 'max', 'min', 'reflection', 'zeros'] = 'min',
@@ -90,7 +90,7 @@ def grid_sample(
 
 def grid_points(
     size: SizeTensor,
-    affine: AffineTensor | None = None,
+    affine: AffineMatrixTensor | None = None,
     return_superset: bool = False,
     ) -> PointsTensor:
     # Get grid points.

@@ -5,11 +5,11 @@ from typing import Dict, Literal, NamedTuple, Optional, Tuple
 
 # First-order types (composed of basic types).
 # Splitting by 'order' allows for easier managing of type dependencies.
-Affine2D = Float[np.ndarray | torch.Tensor, "3 3"]
-Affine2DTensor = Float[torch.Tensor, "3 3"]
-Affine3D = Float[np.ndarray | torch.Tensor, "4 4"]
-Affine3DArray = Float[np.ndarray, "4 4"]
-Affine3DTensor = Float[torch.Tensor, "4 4"]
+AffineMatrix2D = Float[np.ndarray | torch.Tensor, "3 3"]
+AffineMatrix2DTensor = Float[torch.Tensor, "3 3"]
+AffineMatrix3D = Float[np.ndarray | torch.Tensor, "4 4"]
+AffineMatrix3DArray = Float[np.ndarray, "4 4"]
+AffineMatrix3DTensor = Float[torch.Tensor, "4 4"]
 BatchImage2D = Float[np.ndarray | torch.Tensor, "B X Y"]
 BatchImage2DTensor = Float[torch.Tensor, "B X Y"]
 BatchImage3D = Float[np.ndarray | torch.Tensor, "B X Y Z"]
@@ -82,8 +82,8 @@ Spacing3DTensor = Float[torch.Tensor, "3"]
 TransformParams = Dict[int | str, int | str | float | np.ndarray | torch.Tensor | Literal['TransformParams']]
 
 # Second-order types (composed of first-order types).
-Affine = Affine2D | Affine3D
-AffineTensor = Affine2DTensor | Affine3DTensor
+AffineMatrix = AffineMatrix2D | AffineMatrix3D
+AffineMatrixTensor = AffineMatrix2DTensor | AffineMatrix3DTensor
 BatchChannelImage = BatchChannelImage2D | BatchChannelImage3D
 BatchChannelImageTensor = BatchChannelImage2DTensor | BatchChannelImage3DTensor
 BatchChannelLabelImage = BatchChannelLabelImage2D | BatchChannelLabelImage3D
@@ -114,8 +114,8 @@ SpacingTensor = Spacing2DTensor | Spacing3DTensor
 # Third-order types (you get it).
 class SamplingGrid(NamedTuple):
     size: Size
-    affine: Optional[Affine] = None
+    affine: AffineMatrix | None = None
 
 class SamplingGridTensor(NamedTuple):
     size: SizeTensor
-    affine: Optional[AffineTensor] = None
+    affine: AffineMatrixTensor | None = None

@@ -4,7 +4,7 @@ import torch
 import torch
 from typing import List, Union
 
-from ..typing import Affine, AffineTensor, Image, Indices, Points, PointsTensor, SamplingGrid, SamplingGridTensor, Size
+from ..typing import AffineMatrix, AffineMatrixTensor, Image, Indices, Points, PointsTensor, SamplingGrid, SamplingGridTensor, Size
 from ..utils.args import alias_kwargs, arg_to_list
 from ..utils.conversion import to_return_format, to_tensor, to_tuple
 from ..utils.geometry import fov
@@ -14,7 +14,7 @@ from ..utils.misc import get_group_device
 from .grid import GridTransform
 from .identity import Identity
 from .intensity import IntensityTransform
-from .spatial import SpatialTransform
+from .spatial import Affine, SpatialTransform
 from .transform import RandomTransform, Transform
 
 # This shouldn't be instantiated by the user.
@@ -172,7 +172,7 @@ class FrozenPipeline(Transform):
     def __resolve_affine_chain(
         self,
         points: PointsTensor,
-        chain: List[AffineTensor],
+        chain: List[AffineMatrixTensor],
         ) -> PointsTensor:
         if self._verbose:
             logger.info(f"Resolving affine chain of length {len(chain)}.")
@@ -194,10 +194,10 @@ class FrozenPipeline(Transform):
     def transform_images(
         self,
         image: Image | List[Image],
-        affine: Affine | None = None,
+        affine: AffineMatrix | None = None,
         return_affine: bool = False,
         return_single: bool = True,
-        ) -> Image | List[Image | Affine]:
+        ) -> Image | List[Image | AffineMatrix]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
         return_types = [type(i) for i in images]
         device = get_group_device(images, device=self._device)
@@ -288,7 +288,7 @@ class FrozenPipeline(Transform):
     def transform_points(
         self,
         points: Points | List[Points],
-        affine: Affine | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
+        affine: AffineMatrix | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool = True,
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,

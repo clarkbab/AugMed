@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from typing import Any, Dict, List, Literal
 
-from ..typing import Affine, Image, Indices, Number, Points, SamplingGrid, Size, SpatialDim, TransformParams
+from ..typing import AffineMatrix, Image, Indices, Number, Points, SamplingGrid, Size, SpatialDim, TransformParams
 from ..utils.args import alias_kwargs, arg_to_list
 from ..utils.conversion import to_return_format
 
@@ -96,12 +96,12 @@ class Transform:
     def transform(
         self,
         *data: Image | Points | List[Image | Points],
-        affine: Affine | None = None,
+        affine: AffineMatrix | None = None,
         filter_offgrid: bool = True,
         return_affine: bool = False,
         return_filtered: bool = False,
         size: Size | None = None,
-        ) -> Image | Points | List[Image | Points | Affine | TransformParams]:
+        ) -> Image | Points | List[Image | Points | AffineMatrix | TransformParams]:
         data, data_was_single = arg_to_list(data, (np.ndarray, torch.Tensor), return_expanded=True)
         return_types = [type(d) for d in data]
 

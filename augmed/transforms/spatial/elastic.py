@@ -2,12 +2,12 @@ import numpy as np
 import torch
 from typing import List, Literal, Tuple
 
-from ...typing import Affine, AffineTensor, ChannelImageTensor, Indices, Number, Points, PointsTensor, Size
-from ...utils.args import expand_range_arg
+from ...typing import AffineMatrix, AffineMatrixTensor, ChannelImageTensor, Indices, Number, Points, PointsTensor, Size
+from ...utils.args import arg_to_list, expand_range_arg
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
 from ...utils.logging import logger
 from ...utils.matrix import affine_origin, affine_spacing, create_affine
-from ..identity import Identity
+from ..identity import Identity, get_group_device
 from .spatial import RandomSpatialTransform, SpatialTransform
 
 BATCHING_MEM_P = 0.25
@@ -199,7 +199,7 @@ class Elastic(SpatialTransform):
     def control_grid(
         self,
         points: PointsTensor,
-        ) -> Tuple[ChannelImageTensor, AffineTensor]:
+        ) -> Tuple[ChannelImageTensor, AffineMatrixTensor]:
         # Get the origin/spacing for this point cloud.
         cp_spacing = self.__control_spacing.to(points.device)
         cp_global_origin = self.__control_origin.to(points.device)
@@ -327,7 +327,7 @@ class Elastic(SpatialTransform):
     def transform_points(
         self,
         points: Points | List[Points],
-        affine: Affine | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
+        affine: AffineMatrix | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool = True,
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,

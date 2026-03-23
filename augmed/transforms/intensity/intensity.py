@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from typing import List
 
-from ...typing import Affine, Image, ImageTensor, Indices, Points
+from ...typing import AffineMatrix, Image, ImageTensor, Indices, Points
 from ...utils.args import alias_kwargs, arg_to_list
 from ...utils.conversion import to_return_format, to_tensor
 from ...utils.misc import get_group_device
@@ -21,9 +21,9 @@ class IntensityTransform(Transform):
     def transform_images(
         self,
         image: Image | List[Image],
-        affine: Affine | None = None,
+        affine: AffineMatrix | None = None,
         return_affine: bool = False,
-        ) -> Image | List[Image | Affine]:
+        ) -> Image | List[Image | AffineMatrix]:
         images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
         device = get_group_device(images, device=self._device)
         return_types = [type(i) for i in images]

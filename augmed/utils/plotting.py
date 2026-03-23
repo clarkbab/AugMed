@@ -5,7 +5,7 @@ import seaborn as sns
 import torch
 from typing import Literal
 
-from ..typing import Affine3D, ChannelLabelImage2D, ChannelLabelImage3D, Image2D, Image3D, Point3D, Points3D
+from ..typing import AffineMatrix3D, AffineMatrix3DArray, BatchLabelImage3DArray, ChannelLabelImage2D, ChannelLabelImage3D, Image2D, Image3D, LabelImage3DArray, Number, Orientation, Point3D, Points, Points3D, Points3DArray, Size3DArray
 from .assertions import assert_orientation
 from .conversion import to_numpy
 from .geometry import foreground_fov_centre
@@ -150,7 +150,7 @@ def plot_slice(
 
 def plot_volume(
     data: Image3D,
-    affine: Affine3D | None = None,
+    affine: AffineMatrix3D | None = None,
     centre: ChannelLabelImage3D | Point3D | str | None = None,
     cmap: str = 'gray',
     dose: Image3D | None = None,
@@ -291,7 +291,7 @@ def _get_view_idx(
     view: int,
     size: Size3DArray,
     idx: int | float | None = None,
-    affine: Affine3DArray | None = None,
+    affine: AffineMatrix3DArray | None = None,
     centre: LabelImage3DArray | str | None = None,
     labels: BatchLabelImage3DArray | None = None,
     points: Points3DArray | None = None,

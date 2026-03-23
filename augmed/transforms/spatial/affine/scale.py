@@ -3,10 +3,10 @@ import torch
 import torch
 from typing import Literal, Tuple
 
-from ....typing import Affine, Number, Point
+from ....typing import Number, Point
 from ....utils.conversion import to_tensor, to_tuple
 from ...identity import Identity
-from .affine import RandomAffine
+from .affine import Affine, RandomAffine
 
 class Scale(Affine):
     def __init__(
