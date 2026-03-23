@@ -22,22 +22,21 @@ class Rotate(Affine):
             translation=None,
             **kwargs,
         )
-        self._params = dict(
+        super().set_params(
+            self.__class__.__name__,
             backward_matrix=self._backward_rotation_matrix,
-            dim=self._dim,
             matrix=self._rotation_matrix,
             rotation=self._rotation,
             rotation_centre=self._rotation_centre,
             rotation_rad=self._rotation_rad,
-            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:
-        params = dict(
+        return super().super_str(
+            self.__class__.__name__,
             rotation=to_tuple(self._rotation, decimals=3),
             rotation_centre=to_tuple(self._rotation_centre, decimals=3) if self._rotation_centre != 'image-centre' else "\"image-centre\"",
         )
-        return super().super_str(self.__class__.__name__, params)
 
 class RandomRotate(RandomAffine):
     def __init__(
@@ -53,12 +52,10 @@ class RandomRotate(RandomAffine):
             translation=None,
             **kwargs,
         )
-        self._params = dict(
-            dim=self._dim,
-            p=self._p,
+        super().set_params(
+            self.__class__.__name__,
             rotation=self._rotation_range,
             rotation_centre=self._rotation_centre,
-            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'Rotate':
@@ -74,8 +71,8 @@ class RandomRotate(RandomAffine):
         return super().super_freeze(Rotate, params)
 
     def __str__(self) -> str:
-        params = dict(
+        return super().super_str(
+            self.__class__.__name__,
             rotation=to_tuple(self._rotation_range.flatten(), decimals=3) if self._rotation_range is not None else None,
             rotation_centre=to_tuple(self._rotation_centre, decimals=3) if self._rotation_centre != 'image-centre' else "\"image-centre\"",
         )
-        return super().super_str(self.__class__.__name__, params)

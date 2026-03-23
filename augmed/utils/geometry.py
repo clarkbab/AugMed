@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch
 
-from ..typing import AffineMatrix, Box, BoxTensor, LabelImage, Pixel, Point, PointTensor, Points, PointsTensor, Size, Voxel
+from ..typing import AffineMatrix, AffineMatrixTensor, Box, BoxTensor, LabelImage, Pixel, PixelsTensor, PixelTensor, Point, PointsTensor, PointTensor, Size, Voxel, VoxelsTensor, VoxelTensor
 from .conversion import to_numpy, to_tensor
 from .matrix import affine_origin, affine_spacing
 
@@ -17,8 +17,8 @@ def foreground_fov(
     # Get fov of foreground objects.
     non_zero = torch.argwhere(data != 0).type(torch.int)
     fov_vox = torch.stack([
-        non_zero.min(dim=0),
-        non_zero.max(dim=0)
+        non_zero.min(dim=0).values,
+        non_zero.max(dim=0).values,
     ])
     if affine is None:
         if return_type is np.ndarray:
@@ -143,7 +143,7 @@ def to_image_coords(
     affine = to_tensor(affine, return_type=False)
     spacing = affine_spacing(affine)
     origin = affine_origin(affine)
-    point_im = torch.round((point - origin) / spacing).astype(torch.int32)
+    point_im = torch.round((point - origin) / spacing).type(torch.int32)
     if return_type is np.ndarray:
         point_im = to_numpy(point_im)
     return point_im
@@ -156,7 +156,7 @@ def to_world_coords(
     affine = to_tensor(affine, return_type=False)
     spacing = affine_spacing(affine)
     origin = affine_origin(affine)
-    point_w = point * spacing + origin
+    point_w = (point * spacing + origin).type(torch.float32)
     if return_type is np.ndarray:
         point_w = to_numpy(point_w)
     return point_w

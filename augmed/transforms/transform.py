@@ -66,10 +66,24 @@ class Transform:
         assert dim in [2, 3], "Only 2D and 3D transforms are supported."
         self._dim = dim
 
+    # Can be called by all child classes.
+    def set_params(
+        self,
+        type: str,
+        **params: TransformParams,
+        ) -> None:
+        # Put transform type first.
+        self._params = dict(
+            type=type,
+            **params,
+            dim=self._dim,
+            device=self._device,
+        )
+
     def __str__(
         self,
         class_name: str,
-        params: Dict[str, Any],
+        **params: Any,
         ) -> str:
         params['device'] = self._device
         params['dim'] = self._dim
@@ -211,6 +225,13 @@ class RandomTransform(Transform):
         params['dim'] = self._dim
         return klass(**params)
 
+    def set_params(
+        self,
+        *args,
+        **params: TransformParams,
+        ) -> None:
+        super().set_params(*args, p=self._p, **params)
+
     def set_seed(
         self,
         seed: int | None = None,
@@ -220,10 +241,9 @@ class RandomTransform(Transform):
     def __str__(
         self,
         class_name: str,
-        params: Dict[str, Any],
+        **params: Any,
         ) -> str:
-        params['p'] = self._p
-        return super().__str__(class_name, params)
+        return super().__str__(class_name, p=self._p, **params)
 
     def transform(
         self,

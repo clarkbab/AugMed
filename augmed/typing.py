@@ -1,7 +1,7 @@
 from jaxtyping import Bool, Float, Int
 import numpy as np
 import torch
-from typing import Dict, Literal, NamedTuple, Optional, Tuple
+from typing import Dict, Literal, NamedTuple, Tuple
 
 # First-order types (composed of basic types).
 # Splitting by 'order' allows for easier managing of type dependencies.
@@ -67,8 +67,12 @@ Points3DArray = Float[np.ndarray, "N 3"]
 Points3DTensor = Float[torch.Tensor, "N 3"]
 Pixel = Tuple[int, int] | Int[np.ndarray | torch.Tensor, "2"]
 PixelTensor = Int[torch.Tensor, "2"]
+Pixels = Int[np.ndarray | torch.Tensor, "N 2"]
+PixelsTensor = Int[torch.Tensor, "N 2"]
 Voxel = Tuple[int, int, int] | Int[np.ndarray | torch.Tensor, "3"]
 VoxelTensor = Int[torch.Tensor, "3"]
+Voxels = Int[np.ndarray | torch.Tensor, "N 3"]
+VoxelsTensor = Int[torch.Tensor, "N 3"]
 Size2D = Tuple[int, int] | Int[np.ndarray | torch.Tensor, "2"]
 Size2DTensor = Int[torch.Tensor, "2"]
 Size3D = Tuple[int, int, int] | Int[np.ndarray | torch.Tensor, "3"]

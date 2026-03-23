@@ -11,7 +11,9 @@ from ..identity import Identity, get_group_device
 from .spatial import RandomSpatialTransform, SpatialTransform
 
 BATCHING_MEM_P = 0.25
+BATCHING_MIN_POINTS = 10000
 N_ITER_MAX = 100
+CLOSENESS_ATOL = 1e-6
 
 # Defines a coarse grid of control points.
 # Random displacements are assigned at each control point.
@@ -44,16 +46,15 @@ class Elastic(SpatialTransform):
         self.__batching_mem_p = batching_mem_p
         self.__n_iter_max = n_iter_max
         self.__warn_folding()
-        self._params = dict(
+        super().set_params(
+            self.__class__.__name__,
             batching_mem_p=self.__batching_mem_p,
             control_origin=self.__control_origin,
             control_spacing=self.__control_spacing,
-            dim=self._dim,
             displacement=self.__disp_range,
             method=self.__method,
             n_iter_max=self.__n_iter_max,
             seed=self.__seed,
-            type=self.__class__.__name__,
             use_batching=self.__use_batching,
         )
 
@@ -64,6 +65,7 @@ class Elastic(SpatialTransform):
         ) -> PointsTensor:
         if self._debug:
             print("=== Elastic.backward_transform_points (start) ===")
+            print('points: ', points.shape)
 
         # Get the control grid - will be large enough to cover all points.
         cp_disps, cp_affine = self.control_grid(points)
@@ -283,26 +285,31 @@ class Elastic(SpatialTransform):
         ) -> int:
         if self._debug:
             print("=== Elastic.__get_n_batches (start) ===")
+
         if device.type == 'cuda':
-            mem_total = torch.cuda.get_device_properties(device).total_memory
-            if self._debug:
-                print(f"Total GPU memory: {mem_total / (1024 ** 3):.2f} GB")
-            mem_budget = int(mem_total * self.__batching_mem_p)
-            if self._debug:
-                print(f"Allowing up to {mem_budget / (1024 ** 3):.2f} GB before applying batching.")
-            bpp = self.__estimate_bytes_per_point()
-            if self._debug:
-                print(f"Estimated bytes per point: {bpp} B.")
-            points_per_batch = max(mem_budget // bpp, 1)
-            if self._debug:
-                print(f"Processing {points_per_batch} points per batch.")
-            n_batches = max((n_points + points_per_batch - 1) // points_per_batch, 1)
-            if self._debug:
-                print(f"Total batches required: {n_batches}.")
+            if n_points < BATCHING_MIN_POINTS:
+                if self._debug:
+                    print(f"Number of points ({n_points}) below batching threshold ({BATCHING_MIN_POINTS}).")
+                n_batches = 1
+            else:
+                mem_total = torch.cuda.get_device_properties(device).total_memory
+                if self._debug:
+                    print(f"Total GPU memory: {mem_total / (1024 ** 3):.2f} GB")
+                mem_budget = int(mem_total * self.__batching_mem_p)
+                if self._debug:
+                    print(f"Allowing up to {mem_budget / (1024 ** 3):.2f} GB before applying batching.")
+                bpp = self.__estimate_bytes_per_point()
+                if self._debug:
+                    print(f"Estimated bytes per point: {bpp} B.")
+                points_per_batch = max(mem_budget // bpp, 1)
+                if self._debug:
+                    print(f"Processing {points_per_batch} points per batch.")
+                n_batches = max((n_points + points_per_batch - 1) // points_per_batch, 1)
         else:
             n_batches = 1
 
         if self._debug:
+            print(f"Total batches required: {n_batches}.")
             print("=== Elastic.__get_n_batches (end) ===")
 
         return n_batches
@@ -314,7 +321,8 @@ class Elastic(SpatialTransform):
     # This means that subsequent calls to transform_points and backward_transform_points
     # will align points and images properly.
     def __str__(self) -> str:
-        params = dict(
+        return super().__str__(
+            self.__class__.__name__,
             control_origin=to_tuple(self.__control_origin, decimals=3),
             control_spacing=to_tuple(self.__control_spacing, decimals=3),
             displacement=to_tuple(self.__disp_range.flatten(), decimals=3),
@@ -322,7 +330,6 @@ class Elastic(SpatialTransform):
             n_iter_max=self.__n_iter_max,
             seed=self.__seed,
         )
-        return super().__str__(self.__class__.__name__, params)
 
     def transform_points(
         self,
@@ -355,7 +362,7 @@ class Elastic(SpatialTransform):
                 y_i = b(x_i)
 
                 # Check convergence.
-                if torch.isclose(y_i, p).all():
+                if torch.isclose(y_i, p, atol=CLOSENESS_ATOL).all():
                     break
                 elif i == self.__n_iter_max - 1:
                     raise ValueError(f"Elastic.transform_points failed to converge after {self.__n_iter_max} iterations.")
@@ -439,16 +446,14 @@ class RandomElastic(RandomSpatialTransform):
         self.__batching_mem_p = batching_mem_p
         self.__n_iter_max = n_iter_max
         self.__warn_folding()
-        self._params = dict(
+        super().set_params(
+            self.__class__.__name__,
             batching_mem_p=self.__batching_mem_p,
             control_origin=self.__control_origin_range,
             control_spacing=self.__control_spacing_range,
-            dim=self._dim,
             displacement=self.__disp_range,
             method=self.__method,
             n_iter_max=self.__n_iter_max,
-            p=self._p,
-            type=self.__class__.__name__,
             use_batching=self.__use_batching,
         )
 
@@ -476,7 +481,8 @@ class RandomElastic(RandomSpatialTransform):
         return super().freeze(Elastic, params)
 
     def __str__(self) -> str:
-        params = dict(
+        return super().__str__(
+            self.__class__.__name__,
             batching_mem_p=self.__batching_mem_p,
             control_origin=to_tuple(self.__control_origin_range.flatten(), decimals=3),
             control_spacing=to_tuple(self.__control_spacing_range.flatten(), decimals=3),
@@ -485,7 +491,6 @@ class RandomElastic(RandomSpatialTransform):
             n_iter_max=self.__n_iter_max,
             use_batching=self.__use_batching,
         )
-        return super().__str__(self.__class__.__name__, params)
 
     def __warn_folding(self, control_spacing: torch.Tensor | None = None) -> None:
         if control_spacing is None:

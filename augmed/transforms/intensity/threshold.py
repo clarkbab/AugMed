@@ -28,12 +28,10 @@ class RandomThreshold(RandomIntensityTransform):
         self.__max_range = to_tensor(max, broadcast=2) if max is not None else None
         if self.__max_range is not None:
             assert len(self.__max_range) == 2, f"Expected 'max' of length 2, got {len(self.__max_range)}."
-        self._params = dict(
-            dim=self._dim,
+        super().set_params(
+            self.__class__.__name__,
             max=self.__max_range,
             min=self.__min_range,
-            p=self._p,
-            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'Norm':
@@ -50,11 +48,11 @@ class RandomThreshold(RandomIntensityTransform):
         return super().freeze(Threshold, params)
 
     def __str__(self) -> str:
-        params = dict(
+        return super().__str__(
+            self.__class__.__name__,
             max=to_tuple(self.__max_range, decimals=3) if self.__max_range is not None else None,
             min=to_tuple(self.__min_range, decimals=3) if self.__min_range is not None else None,
         )
-        return super().__str__(self.__class__.__name__, params)
 
 class Threshold(IntensityTransform):
     def __init__(
@@ -66,19 +64,18 @@ class Threshold(IntensityTransform):
         super().__init__(**kwargs)
         self.__min = min
         self.__max = max
-        self._params = dict(
-            dim=self._dim,
+        super().set_params(
+            self.__class__.__name__,
             max=self.__max,
             min=self.__min,
-            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:
-        params = dict(
+        return super().__str__(
+            self.__class__.__name__,
             max=round(self.__max, 3) if self.__max is not None else None,
             min=round(self.__min, 3) if self.__min is not None else None,
         )
-        return super().__str__(self.__class__.__name__, params)
 
     def transform_intensity(
         self,

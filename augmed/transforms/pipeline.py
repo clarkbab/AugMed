@@ -30,9 +30,9 @@ class FrozenPipeline(Transform):
         super().__init__(**kwargs)
         self.__transforms = transforms
         self.__warn_resamples()
-        self._params = dict(
+        super().set_params(
+            self.__class__.__name__,
             transforms=[t.params for t in self.__transforms],
-            type=self.__class__.__name__,
         )
 
     # Performs the back transform for a grid/spatial group applying
@@ -183,10 +183,10 @@ class FrozenPipeline(Transform):
         return points_t
         
     def __str__(self) -> str:
-        params = dict(
+        return super().__str__(
+            self.__class__.__name__,
             transforms=self.__transforms,
         )
-        return super().__str__(self.__class__.__name__, params)
 
     @alias_kwargs([
         ('a', 'affine'),
@@ -428,10 +428,10 @@ class Pipeline(RandomTransform):
         return self.__transforms[i]
         
     def __str__(self) -> str:
-        params = dict(
+        return super().__str__(
+            self.__class__.__name__,
             transforms=self.__transforms,
         )
-        return super().__str__(self.__class__.__name__, params)
 
     @property
     def transforms(self) -> List[Transform]:

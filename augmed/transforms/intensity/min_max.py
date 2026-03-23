@@ -17,19 +17,18 @@ class MinMax(IntensityTransform):
         super().__init__(**kwargs)
         self.__min = min
         self.__max = max
-        self._params = dict(
-            dim=self._dim,
+        super().set_params(
+            self.__class__.__name__,
             max=self.__max,
             min=self.__min,
-            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:
-        params = dict(
+        return super().__str__(
+            self.__class__.__name__,
             max=round(self.__max, 3),
             min=round(self.__min, 3),
         )
-        return super().__str__(self.__class__.__name__, params)
 
     def transform_intensity(
         self,
@@ -54,12 +53,10 @@ class RandomMinMax(RandomIntensityTransform):
         max_range = expand_range_arg(max, dim=1)
         assert len(max_range) == 2, f"Expected 'max' of length 2, got {len(max_range)}."
         self.__max_range = to_tensor(max_range, dtype=torch.float32)
-        self._params = dict(
-            dim=self._dim,
+        super().set_params(
+            self.__class__.__name__,
             max=self.__max_range,
             min=self.__min_range,
-            p=self._p,
-            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'MinMax':
@@ -76,8 +73,8 @@ class RandomMinMax(RandomIntensityTransform):
         return super().freeze(MinMax, params)
 
     def __str__(self) -> str:
-        params = dict(
+        return super().__str__(
+            self.__class__.__name__,
             max=to_tuple(self.__max_range, decimals=3),
             min=to_tuple(self.__min_range, decimals=3),
         )
-        return super().__str__(self.__class__.__name__, params)

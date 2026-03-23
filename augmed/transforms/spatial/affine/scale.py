@@ -22,21 +22,20 @@ class Scale(Affine):
             translation=None,
             **kwargs,
         )
-        self._params = dict(
+        super().set_params(
+            self.__class__.__name__,
             backward_matrix=self._backward_scaling_matrix,
-            dim=self._dim,
             matrix=self._scaling_matrix,
             scaling=self._scaling,
             scaling_centre=self._scaling_centre,
-            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:
-        params = dict(
+        return super().super_str(
+            self.__class__.__name__,
             scaling=to_tuple(self._scaling, decimals=3),
             scaling_centre=to_tuple(self._scaling_centre, decimals=3) if self._scaling_centre != 'image-centre' else "\"image-centre\"",
         )
-        return super().super_str(self.__class__.__name__, params)
 
 class RandomScale(RandomAffine):
     def __init__(
@@ -53,12 +52,10 @@ class RandomScale(RandomAffine):
             translation=None,
             **kwargs,
         )
-        self._params = dict(
-            dim=self._dim,
-            p=self._p,
+        super().set_params(
+            self.__class__.__name__,
             scaling=self._scaling_range,
             scaling_centre=self._scaling_centre,
-            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'Scale':
@@ -74,8 +71,8 @@ class RandomScale(RandomAffine):
         return super().super_freeze(Scale, params)
 
     def __str__(self) -> str:
-        params = dict(
+        return super().super_str(
+            self.__class__.__name__,
             scaling=to_tuple(self._scaling_range.flatten(), decimals=3) if self._scaling_range is not None else None,
             scaling_centre=to_tuple(self._scaling_centre, decimals=3) if self._scaling_centre != 'image-centre' else "\"image-centre\"",
         )
-        return super().super_str(self.__class__.__name__, params)

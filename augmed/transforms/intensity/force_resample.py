@@ -14,7 +14,7 @@ class ForceResample(IntensityTransform):
         )
 
     def __str__(self) -> str:
-        return super().__str__(self.__class__.__name__, {})
+        return super().__str__(self.__class__.__name__)
 
     def transform_intensity(
         self,

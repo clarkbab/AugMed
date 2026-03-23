@@ -72,12 +72,12 @@ LIBRARY_NDIMS = {
 
 # Shared transform parameters that are as close as possible across
 # libraries so the workloads are comparable.
-CROP_REMOVE_MM = 50.0           # mm to remove per side
+CROP_REMOVE_MM = 20.0           # mm to remove per side
 ROTATION_DEG = 15.0             # max rotation per axis in degrees
 SCALING_RANGE = (0.8, 1.2)
 TRANSLATION_MM = 20.0           # max translation per axis in mm
 ELASTIC_SPACING_MM = 50.0       # control-point spacing
-ELASTIC_DISP_MM = 10.0          # max displacement
+ELASTIC_DISP_MM = 20.0          # max displacement
 MINMAX_RANGE = (0.0, 1.0)
 
 
@@ -150,7 +150,7 @@ def _build_augmed_pipeline(steps: List[str], *, device: torch.device) -> Any:
     transforms = []
     for s in steps:
         if s == 'crop':
-            transforms.append(RandomCrop(crop_remove=CROP_REMOVE_MM))
+            transforms.append(RandomCrop(remove=CROP_REMOVE_MM))
         elif s == 'affine':
             transforms.append(RandomAffine(
                 rotation=ROTATION_DEG,

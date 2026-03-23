@@ -5,59 +5,58 @@ from typing import List, Literal, Tuple
 from ...typing import AffineMatrix, Indices, Number, Points, SamplingGridTensor, Size
 from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg, to_tuple
 from ...utils.conversion import to_return_format, to_tensor
-from ...utils.geometry import fov, fov_centre
+from ...utils.geometry import fov, fov_centre, to_image_coords, to_world_coords
 from ...utils.matrix import affine_origin, affine_spacing, create_affine
 from ..identity import Identity, get_group_device
 from .grid import GridTransform, RandomGridTransform
 
 class Pad(GridTransform):
     @alias_kwargs([
-        ('pa', 'pad_add'),
-        ('pc', 'pad_centre'),
-        ('pco', 'pad_centre_offset'),
-        ('pm', 'pad_margin'),
+        ('pa', 'add'),
+        ('pc', 'centre'),
+        ('pco', 'centre_offset'),
+        ('pm', 'margin'),
     ])
     def __init__(
         self,
-        pad_add: Number | Tuple[Number, ...] | None = None,
-        pad_centre: Number | Literal['image-centre'] | Tuple[Number | Literal['image-centre'], ...] | None = 'image-centre',
-        pad_centre_offset: Number | Tuple[Number, ...] | None = 0.0,
-        pad_margin: Number | Tuple[Number, ...] | None = None,
+        add: Number | Tuple[Number, ...] | None = None,
+        centre: Number | Literal['image-centre'] | Tuple[Number | Literal['image-centre'], ...] | None = 'image-centre',
+        centre_offset: Number | Tuple[Number, ...] | None = 0.0,
+        margin: Number | Tuple[Number, ...] | None = None,
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
-        assert pad_add is not None or (pad_centre is not None and pad_margin is not None)
-        if pad_add is not None:
-            pad_add_range = expand_range_arg(pad_add, dim=self._dim)
-            self.__pad_add = to_tensor(pad_add_range).reshape(self._dim, 2)
-            self.__pad_margin = None
-            self.__pad_centre = None
-            self.__pad_centre_offset = None
+        assert add is not None or (centre is not None and margin is not None)
+        if add is not None:
+            add_range = expand_range_arg(add, dim=self._dim)
+            self.__add = to_tensor(add_range).reshape(self._dim, 2)
+            self.__margin = None
+            self.__centre = None
+            self.__centre_offset = None
         else:
-            pad_margin_range = expand_range_arg(pad_margin, dim=self._dim)
-            self.__pad_margin = to_tensor(pad_margin_range).reshape(self._dim, 2)
-            self.__pad_centre = to_tuple(pad_centre, broadcast=self._dim)   # Tensors can't store str types.
-            assert len(self.__pad_centre) == self._dim
-            self.__pad_centre_offset = to_tensor(pad_centre_offset, broadcast=self._dim)
-            assert len(self.__pad_centre_offset) == self._dim
+            margin_range = expand_range_arg(margin, dim=self._dim)
+            self.__margin = to_tensor(margin_range).reshape(self._dim, 2)
+            self.__centre = to_tuple(centre, broadcast=self._dim)   # Tensors can't store str types.
+            assert len(self.__centre) == self._dim
+            self.__centre_offset = to_tensor(centre_offset, broadcast=self._dim)
+            assert len(self.__centre_offset) == self._dim
 
-        self._params = dict(
-            dim=self._dim,
-            pad_add=self.__pad_add,
-            pad_centre=self.__pad_centre,
-            pad_centre_offset=self.__pad_centre_offset,
-            pad_margin=self.__pad_margin,
-            type=self.__class__.__name__,
+        super().set_params(
+            self.__class__.__name__,
+            add=self.__add,
+            centre=self.__centre,
+            centre_offset=self.__centre_offset,
+            margin=self.__margin,
         )
 
     def __str__(self) -> str:
-        params = dict(
+        return super().__str__(
+            self.__class__.__name__,
             centre=to_tuple(self.__centre, decimals=3),
             centre_offset=to_tuple(self.__centre_offset.flatten(), decimals=3) if self.__centre_offset is not None else None,
-            pad=to_tuple(self.__pad.flatten(), decimals=3) if self.__pad is not None else None,
-            pad_margin=to_tuple(self.__pad_margin.flatten(), decimals=3) if self.__pad_margin is not None else None,
+            add=to_tuple(self.__add.flatten(), decimals=3) if self.__add is not None else None,
+            margin=to_tuple(self.__margin.flatten(), decimals=3) if self.__margin is not None else None,
         )
-        return super().__str__(self.__class__.__name__, params)
 
     def transform_grid(
         self,
@@ -65,61 +64,52 @@ class Pad(GridTransform):
         **kwargs,
         ) -> SamplingGridTensor:
         size, affine = grid
-        if self.__pad_add is not None:
+        if self.__add is not None:
             # Get the current FOV.
-            fov_min, fov_max = fov(size, affine=affine)
+            fov_min, fov_max = fov(size, affine=None)
 
             # Get the amounts to add.
-            pad_add_min = self.__pad_add[:, 0].to(size.device)
-            pad_add_max = self.__pad_add[:, 1].to(size.device)
-
+            add_min = self.__add[:, 0].to(size.device)
+            add_max = self.__add[:, 1].to(size.device)
             if affine is not None:
-                # Convert FOV from mm -> vox.
-                fov_min = to_image_coords(fov_min, affine)
-                fov_max = to_image_coords(fov_max, affine)
-
-                # Convert 'pad_add' from mm -> vox.
-                pad_add_min = to_image_coords(pad_add_min, affine)
-                pad_add_max = to_image_coords(pad_add_max, affine)
+                add_min /= affine_spacing(affine)
+                add_max /= affine_spacing(affine)
 
             # Get the new FOV.
-            pad_min_vox = fov_min - pad_add_min
-            pad_max_vox = fov_max + pad_add_max
+            fov_min = torch.clamp(fov_min - add_min, 0)
+            fov_max = torch.clamp(fov_max + add_max, max=(size - 1))
         else:
             # Get pad centre.
-            fov_c = fov_centre(size, affine=affine)
-            centre_mm = [fov_c[i] if c == 'image-centre' else c for i, c in enumerate(self.__pad_centre)]
-            centre_mm = to_tensor(centre_mm, device=size.device)
-            centre_mm = centre_mm + self.__pad_centre_offset.to(size.device)
+            fov_c = fov_centre(size, affine=None)
+            centre = [fov_c[i] if c == 'image-centre' else c for i, c in enumerate(self.__centre)]
+            centre = to_tensor(centre, device=size.device)
+
+            # Get centre offset.
+            centre_offset = self.__centre_offset.to(size.device)
+            if affine is not None:
+                centre_offset /= affine_spacing(affine)
+            centre += centre_offset
 
             # Get pad box.
-            pad_margin_min_mm = self.__pad_margin[:, 0].to(size.device)
-            pad_margin_max_mm = self.__pad_margin[:, 1].to(size.device)
-            if not self._use_image_coords:
-                # Convert from image -> patient coords.
-                pad_margin_min_mm = (spacing * pad_margin_min_mm).type(torch.float32)
-                pad_margin_max_mm = (spacing * pad_margin_max_mm).type(torch.float32)
-            pad_min_mm = centre_mm - pad_margin_min_mm
-            pad_max_mm = centre_mm + pad_margin_max_mm
-
-            # Convert to voxels.
-            pad_min_vox = to_image_coords(pad_min_mm, affine)
-            pad_max_vox = to_image_coords(pad_max_mm, affine)
+            margin_min = self.__margin[:, 0].to(size.device)
+            margin_max = self.__margin[:, 1].to(size.device)
+            if affine is not None:
+                margin_min /= affine_spacing(affine)
+                margin_max /= affine_spacing(affine)
 
             # Truncate to true voxel coords.
-            pad_min_vox = torch.clamp(pad_min_vox, 0)
-            pad_max_vox = torch.clamp(pad_max_vox, max=(size - 1))
+            fov_min = torch.clamp(centre - margin_min, 0)
+            fov_max = torch.clamp(centre + margin_max, max=(size - 1))
 
         # Get new size.
-        size_t = pad_max_vox - pad_min_vox
+        size_t = fov_max - fov_min
         size_t = size_t.clamp(0)
 
         # Get new affine.
         if affine is not None:
             # Crop doesn't change voxel spacing, but it does change the position of the 0th voxel in world coordinates.
             spacing_t = affine_spacing(affine)
-            origin = affine_origin(affine)
-            origin_t = (pad_min_vox * spacing_t) + origin
+            origin_t = to_world_coords(fov_min, affine)
             affine_t = create_affine(spacing_t, origin_t, device=size.device)
         else:
             affine_t = None
@@ -163,12 +153,12 @@ class Pad(GridTransform):
                 origin_t = affine_origin(affine_t)
 
                 # Get pad box.
-                pad_min_mm = origin_t
-                pad_max_mm = origin_t + size_t * spacing_t
+                min_mm = origin_t
+                max_mm = origin_t + size_t * spacing_t
 
                 # Pad points.
-                pad_mm = torch.stack([pad_min_mm, pad_max_mm]).to(device)
-                to_keep = (points >= pad_mm[0]) & (points < pad_mm[1])
+                bounds_mm = torch.stack([min_mm, max_mm]).to(device)
+                to_keep = (points >= bounds_mm[0]) & (points < bounds_mm[1])
                 to_keep = to_keep.all(axis=1)
                 points_t = points_t[to_keep]
                 indices = torch.where(~to_keep)[0].type(torch.int32)
@@ -186,23 +176,23 @@ class Pad(GridTransform):
 
 class RandomPad(RandomGridTransform):
     @alias_kwargs([
-        ('pa', 'pad_add'),
-        ('pc', 'pad_centre'),
-        ('pco', 'pad_centre_offset'),
-        ('pm', 'pad_margin'),
+        ('a', 'add'),
+        ('pc', 'centre'),
+        ('pco', 'centre_offset'),
+        ('pm', 'margin'),
         ('s', 'symmetric'),
     ])
     def __init__(
         self,
         # How many ways are there to define a pad?
         # 1. Removing an amount off each axis end ('pad_remove').
-        # 2. Padding using a centre and margin ('pad_centre', 'pad_margin').
+        # 2. Padding using a centre and margin ('centre', 'margin').
         # 3. Using defined values in image/world coordinates.
         # 4. TODO: Padding around a label centre or boundary.
-        pad_add: Number | Tuple[Number, ...] | None = None,
-        pad_centre: Number | Literal['image-centre'] | Tuple[Number | Literal['image-centre'], ...] | None = 'image-centre',
-        pad_centre_offset: Number | Tuple[Number, ...] | None = 0.0,
-        pad_margin: Number | Tuple[Number, ...] | None = None,
+        add: Number | Tuple[Number, ...] | None = None,
+        centre: Number | Literal['image-centre'] | Tuple[Number | Literal['image-centre'], ...] | None = 'image-centre',
+        centre_offset: Number | Tuple[Number, ...] | None = 0.0,
+        margin: Number | Tuple[Number, ...] | None = None,
         # padded amounts are the same at both ends of each axis.
         # This should be configured per axis really, for example we might want want symmetry
         # along the x-axis only.
@@ -210,54 +200,52 @@ class RandomPad(RandomGridTransform):
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
-        assert pad_add is not None or (pad_centre is not None and pad_margin is not None), "Must specify either 'pad_add' or both 'pad_centre' and 'pad_margin'."
+        assert add is not None or (centre is not None and margin is not None), "Must specify either 'add' or both 'centre' and 'margin'."
         self.__symmetric = to_tensor(symmetric, broadcast=self._dim)
-        if pad_add is not None:
+        if add is not None:
             # Handle pad from outside case.
             cr_vals_per_dim = 4
-            pad_add_range = expand_range_arg(pad_add, dim=self._dim, vals_per_dim=cr_vals_per_dim)
-            assert len(pad_add_range) == cr_vals_per_dim * self._dim, f"Expected 'pad_add' of length {cr_vals_per_dim * self._dim}, got {len(pad_add_range)}."
+            add_range = expand_range_arg(add, dim=self._dim, vals_per_dim=cr_vals_per_dim)
+            assert len(add_range) == cr_vals_per_dim * self._dim, f"Expected 'add' of length {cr_vals_per_dim * self._dim}, got {len(add_range)}."
 
             # Ensure pad ranges allow symmetry.
             for i, s in enumerate(self.__symmetric):
-                cr_axis_vals = pad_add_range[i * cr_vals_per_dim:(i + 1) * cr_vals_per_dim]
+                cr_axis_vals = add_range[i * cr_vals_per_dim:(i + 1) * cr_vals_per_dim]
                 if s and (cr_axis_vals[0] != cr_axis_vals[2] or cr_axis_vals[1] != cr_axis_vals[3]):
                     raise ValueError(f"Cannot create symmetric pads for axis {i} with pad ranges {cr_axis_vals}.")
 
-            self.__pad_add_range = to_tensor(pad_add_range).reshape(self._dim, 2, 2)
+            self.__add_range = to_tensor(add_range).reshape(self._dim, 2, 2)
             # Should we zero out things that aren't relevant?
-            self.__pad_centre = None
-            self.__pad_margin_range = None
-            self.__pad_centre_offset_range = None
+            self.__centre = None
+            self.__margin_range = None
+            self.__centre_offset_range = None
         else:
             # Handle pad from centre point and margin case.
             cmr_vals_per_dim = 4
-            pad_margin_range = expand_range_arg(pad_margin, dim=self._dim, vals_per_dim=cmr_vals_per_dim)
-            assert len(pad_margin_range) == cmr_vals_per_dim * self._dim, f"Expected 'pad_margin' of length {cmr_vals_per_dim * self._dim}, got {len(pad_margin_range)}."
+            margin_range = expand_range_arg(margin, dim=self._dim, vals_per_dim=cmr_vals_per_dim)
+            assert len(margin_range) == cmr_vals_per_dim * self._dim, f"Expected 'margin' of length {cmr_vals_per_dim * self._dim}, got {len(margin_range)}."
 
             # Ensure pad margin ranges allow symmetry.
             for i, s in enumerate(self.__symmetric):
-                cmr_axis_vals = pad_margin_range[i * cmr_vals_per_dim:(i + 1) * cmr_vals_per_dim]
+                cmr_axis_vals = margin_range[i * cmr_vals_per_dim:(i + 1) * cmr_vals_per_dim]
                 if s and (cmr_axis_vals[0] != cmr_axis_vals[2] or cmr_axis_vals[1] != cmr_axis_vals[3]):
                     raise ValueError(f"Cannot create symmetric pads for axis {i} with pad margin ranges {cmr_axis_vals}.")
 
-            self.__pad_margin_range = to_tensor(pad_margin_range).reshape(self._dim, 2, 2)
-            pad_centre = arg_to_list(pad_centre, (int, float, str), broadcast=self._dim)
-            assert len(pad_centre) == self._dim, f"Expected 'pad_centre' of length {self._dim}, got {len(pad_centre)}."
-            self.__pad_centre = pad_centre  # Can't be tensor as might have 'image-centre' str.
-            pad_centre_offset_range = expand_range_arg(pad_centre_offset, dim=self._dim, negate_lower=True)
-            assert len(pad_centre_offset_range) == 2 * self._dim, f"Expected 'pad_centre_offset' of length {2 * self._dim}, got {len(pad_centre_offset_range)}."
-            self.__pad_centre_offset_range = to_tensor(centre_offset_range).reshape(self._dim, 2)
-            self.__pad_add_range = None
+            self.__margin_range = to_tensor(margin_range).reshape(self._dim, 2, 2)
+            centre = arg_to_list(centre, (int, float, str), broadcast=self._dim)
+            assert len(centre) == self._dim, f"Expected 'centre' of length {self._dim}, got {len(centre)}."
+            self.__centre = centre  # Can't be tensor as might have 'image-centre' str.
+            centre_offset_range = expand_range_arg(centre_offset, dim=self._dim, negate_lower=True)
+            assert len(centre_offset_range) == 2 * self._dim, f"Expected 'centre_offset' of length {2 * self._dim}, got {len(centre_offset_range)}."
+            self.__centre_offset_range = to_tensor(centre_offset_range).reshape(self._dim, 2)
+            self.__add_range = None
 
-        self._params = dict(
-            dim=self._dim,
-            p=self._p,
-            pad_add=self.__pad_add_range,
-            pad_centre=self.__pad_centre,
-            pad_centre_offset=self.__pad_centre_offset_range,
-            pad_margin=self.__pad_margin_range,
-            type=self.__class__.__name__,
+        super().set_params(
+            self.__class__.__name__,
+            add=self.__add_range,
+            centre=self.__centre,
+            centre_offset=self.__centre_offset_range,
+            margin=self.__margin_range,
         )
 
     def freeze(self) -> 'Pad':
@@ -265,35 +253,35 @@ class RandomPad(RandomGridTransform):
         if not should_apply:
             return Identity(dim=self._dim)
         draw = to_tensor(self._rng.random((self._dim, 2)))
-        if self.__pad_add_range is not None:
-            pad_add_draw = (draw * (self.__pad_add_range[:, :, 1] - self.__pad_add_range[:, :, 0]) + self.__pad_add_range[:, :, 0])
+        if self.__add_range is not None:
+            add_draw = (draw * (self.__add_range[:, :, 1] - self.__add_range[:, :, 0]) + self.__add_range[:, :, 0])
             # Copy lower end of axis for symmetric pads.
             sym_axes = torch.argwhere(self.__symmetric).flatten()
-            pad_add_draw[sym_axes, 1] = pad_add_draw[sym_axes, 0]
-            pad_margin_draw = None
+            add_draw[sym_axes, 1] = add_draw[sym_axes, 0]
+            margin_draw = None
             centre_offset_draw = None
         else:
-            pad_draw = None
-            pad_margin_draw = (draw * (self.__pad_margin_range[:, :, 1] - self.__pad_margin_range[:, :, 0]) + self.__pad_margin_range[:, :, 0])
+            add_draw = None
+            margin_draw = (draw * (self.__margin_range[:, :, 1] - self.__margin_range[:, :, 0]) + self.__margin_range[:, :, 0])
             # Copy lower end of axis for symmetric pads.
             sym_axes = torch.argwhere(self.__symmetric).flatten()
-            pad_margin_draw[sym_axes, 1] = pad_margin_draw[sym_axes, 0]
+            margin_draw[sym_axes, 1] = margin_draw[sym_axes, 0]
             draw = to_tensor(self._rng.random(self._dim))
-            centre_offset_draw = (draw * (self.__pad_centre_offset_range[:, 1] - self.__pad_centre_offset_range[:, 0]) + self.__pad_centre_offset_range[:, 0])
+            centre_offset_draw = (draw * (self.__centre_offset_range[:, 1] - self.__centre_offset_range[:, 0]) + self.__centre_offset_range[:, 0])
 
         params = dict(
-            pad=pad_draw,
-            pad_centre=self.__pad_centre,
-            pad_centre_offset=centre_offset_draw,
-            pad_margin=pad_margin_draw,
+            add=add_draw,
+            centre=self.__centre,
+            centre_offset=centre_offset_draw,
+            margin=margin_draw,
         )
         return super().freeze(Pad, params)
 
     def __str__(self) -> str:
-        params = dict(
-            pad_add=to_tuple(self.__pad_add_range.flatten(), decimals=3) if self.__pad_add_range is not None else None,
-            pad_centre=to_tuple(self.__pad_centre, decimals=3),
-            pad_centre_offset=to_tuple(self.__pad_centre_offset_range.flatten(), decimals=3) if self.__pad_centre_offset_range is not None else None,
-            pad_margin=to_tuple(self.__pad_margin_range.flatten(), decimals=3) if self.__pad_margin_range is not None else None,
+        return super().__str__(
+            self.__class__.__name__,
+            add=to_tuple(self.__add_range.flatten(), decimals=3) if self.__add_range is not None else None,
+            centre=to_tuple(self.__centre, decimals=3),
+            centre_offset=to_tuple(self.__centre_offset_range.flatten(), decimals=3) if self.__centre_offset_range is not None else None,
+            margin=to_tuple(self.__margin_range.flatten(), decimals=3) if self.__margin_range is not None else None,
         )
-        return super().__str__(self.__class__.__name__, params)

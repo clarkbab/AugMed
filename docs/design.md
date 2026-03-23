@@ -29,3 +29,7 @@ Should we allow users to compute List[Image] transforms on multiple devices with
 In that case, how do we assign a device to perform the transforms? Transform.__init__(device=...) allows us to set this at a high level. But if this is not set: For "transform_points" it's easy, just use the device of the points torch.Tensor (or CPU if np.ndarray). For "transform_images", we'll just have to select the device of images[0].
 
 We should match the input types when setting return types. I.e. if the user passed all numpy arrays, they should get numpy arrays out, even though Transform(device='cuda').
+
+### Thoughts
+
+What's the difference between Transform._params and the params set in Transform.__str__. Transform._params is a complete set of the values required to replicate the transform, whereas Transform.__str__ prints a human-friendly version of these params but skips large params (e.g. matrices) and rounds values for viewing.

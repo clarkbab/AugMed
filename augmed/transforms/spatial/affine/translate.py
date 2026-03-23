@@ -20,24 +20,23 @@ class Translate(Affine):
             translation=translation,
             **kwargs,
         )
-        self._params = dict(
+        super().set_params(
+            self.__class__.__name__,
             backward_matrix=self._backward_translation_matrix,
-            dim=self._dim,
             matrix=self._translation_matrix,
             translation=self._translation,
-            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:
-        params = dict(
+        return super().super_str(
+            self.__class__.__name__,
             translation=to_tuple(self._translation, decimals=3),
         )
-        return super().super_str(self.__class__.__name__, params)
 
 class RandomTranslate(RandomAffine):
     def __init__(
         self, 
-        translation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = 50.0,
+        translation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = 20.0,
         **kwargs,
         ) -> None:
         super().__init__(
@@ -46,11 +45,9 @@ class RandomTranslate(RandomAffine):
             translation=translation,
             **kwargs,
         )
-        self._params = dict(
-            dim=self._dim,
-            p=self._p,
+        super().set_params(
+            self.__class__.__name__,
             translation=self._translation_range,
-            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'Translate':
@@ -65,7 +62,7 @@ class RandomTranslate(RandomAffine):
         return super().super_freeze(Translate, params)
 
     def __str__(self) -> str:
-        params = dict(
+        return super().super_str(
+            self.__class__.__name__,
             translation=to_tuple(self._translation_range.flatten(), decimals=3) if self._translation_range is not None else None,
         )
-        return super().super_str(self.__class__.__name__, params)

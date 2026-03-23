@@ -5,10 +5,10 @@ import seaborn as sns
 import torch
 from typing import Literal
 
-from ..typing import Affine3D, Affine3DArray, BatchLabelImage3DArray, ChannelLabelImage2D, ChannelLabelImage3D, Image2D, Image3D, Number, Orientation, Points3D, Points3DArray, Size3DArray
+from ..typing import AffineMatrix3D, AffineMatrix3DArray, BatchLabelImage3DArray, ChannelLabelImage2D, ChannelLabelImage3D, Image2D, Image3D, Number, Orientation, Points, Points3D, Points3DArray, Size3DArray
 from .assertions import assert_orientation
 from .conversion import to_numpy
-from .geometry import foreground_fov_centre
+from .geometry import foreground_fov_centre, to_image_coords
 from .logging import logger
 from .matrix import affine_origin, affine_spacing
 
@@ -150,7 +150,7 @@ def plot_slice(
 
 def plot_volume(
     data: Image3D,
-    affine: Affine3D | None = None,
+    affine: AffineMatrix3D | None = None,
     cmap: str = 'gray',
     dose: Image3D | None = None,
     dose_alpha_min: float = 0.3,
@@ -163,7 +163,7 @@ def plot_volume(
     orientation: Orientation = 'LPS',
     label_alpha: float = 0.3,
     points: Points3D | None = None,
-    points_colour: str = 'gradient',
+    points_colour: str = 'yellow',
     show_point_idxs: bool = False,
     show_title: bool = True,
     use_image_coords: bool = False,
@@ -287,7 +287,7 @@ def plot_volume(
 def _get_view_idx(
     view: int,
     size: Size3DArray,
-    affine: Affine3DArray | None = None,
+    affine: AffineMatrix3DArray | None = None,
     idx: int | float | str | None = None,
     labels: BatchLabelImage3DArray | None = None,
     points: Points3DArray | None = None,
@@ -296,15 +296,11 @@ def _get_view_idx(
     if idx is None:
         idx = 'p:0.5'
 
-    # Bare number: world coords if affine provided, voxel coords otherwise.
+    # World coords.
     if isinstance(idx, (int, float)) and not isinstance(idx, bool):
         if affine is not None:
-            spacing = affine_spacing(affine)
-            origin = affine_origin(affine)
-            vox = (idx - origin[view]) / spacing[view]
-        else:
-            vox = idx
-        return int(np.clip(np.round(vox), 0, size[view] - 1))
+            idx = to_image_coords(idx, affine)
+        return int(np.clip(np.round(idx), 0, size[view] - 1))
 
     # String prefixes.
     if not isinstance(idx, str):
@@ -317,17 +313,17 @@ def _get_view_idx(
         p = float(value)
         return int(np.clip(np.round(p * (size[view] - 1)), 0, size[view] - 1))
 
-    # Voxel (image) index.
+    # Image coords.
     if source == 'i':
         return int(np.clip(int(value), 0, size[view] - 1))
 
-    # Centre on label channel.
+    # Label channels.
     if source == 'labels':
         if labels is None:
             raise ValueError(f"idx='{idx}' but no labels were provided.")
         centre = foreground_fov_centre(labels[int(value)], affine=affine)
 
-    # Centre on point.
+    # Points.
     elif source == 'points':
         if points is None:
             raise ValueError(f"idx='{idx}' but no points were provided.")
@@ -338,8 +334,6 @@ def _get_view_idx(
 
     # Convert world coords to voxel coords.
     if affine is not None:
-        spacing = affine_spacing(affine)
-        origin = affine_origin(affine)
-        centre = (centre - origin) / spacing
+        centre = to_image_coords(centre, affine)
 
     return int(np.clip(np.round(centre[view]), 0, size[view] - 1))

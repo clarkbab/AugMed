@@ -9,8 +9,15 @@ from ..utils.misc import get_group_device
 from .transform import Transform
 
 class Identity(Transform):
+    def __init__(
+        self,
+        **kwargs,
+        ) -> None:
+        super().__init__(**kwargs)
+        super().set_params(self.__class__.__name__)
+
     def __str__(self) -> str:
-        return super().__str__(self.__class__.__name__, {})
+        return super().__str__(self.__class__.__name__)
 
     def transform_images(
         self,

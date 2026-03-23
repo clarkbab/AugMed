@@ -27,19 +27,18 @@ class Resize(GridTransform):
         assert (size is not None or spacing is not None) and not (size is not None and spacing is not None), "Exactly one of 'size' or 'spacing' must be specified."
         self.__size = to_tensor(size, broadcast=self._dim, dtype=torch.int32) if size is not None else None
         self.__spacing = to_tensor(spacing, broadcast=self._dim) if spacing is not None else None
-        self._params = dict(
-            dim=self._dim,
+        super().set_params(
+            self.__class__.__name__,
             size=self.__size,
             spacing=self.__spacing,
-            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:
-        params = dict(
+        return super().__str__(
+            self.__class__.__name__,
             size=to_tuple(self.__size) if self.__size is not None else None,
             spacing=to_tuple(self.__spacing, decimals=3) if self.__spacing is not None else None,
         )
-        return super().__str__(self.__class__.__name__, params)
 
     def transform_grid(
         self,
@@ -91,12 +90,10 @@ class RandomResize(RandomGridTransform):
             self.__spacing = to_tensor(spacing_range).reshape(self._dim, 2)
             self.__size = None
 
-        self._params = dict(
-            dim=self._dim,
-            p=self._p,
+        super().set_params(
+            self.__class__.__name__,
             size=self.__size,
             spacing=self.__spacing,
-            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'Resize':
@@ -119,8 +116,8 @@ class RandomResize(RandomGridTransform):
         return super().freeze(Resize, params)
 
     def __str__(self) -> str:
-        params = dict(
+        return super().__str__(
+            self.__class__.__name__,
             size=to_tuple(self.__size.flatten()) if self.__size is not None else None,
             spacing=to_tuple(self.__spacing.flatten(), decimals=3) if self.__spacing is not None else None,
         )
-        return super().__str__(self.__class__.__name__, params)

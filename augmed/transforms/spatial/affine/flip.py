@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from typing import Literal, Tuple
 
-from ....typing import AffineMatrix, Number, Point, SpatialDim
+from ....typing import Number, Point, SpatialDim
 from ....utils.args import alias_kwargs, arg_to_list
 from ....utils.conversion import to_tensor, to_tuple
 from ...identity import Identity
@@ -18,7 +18,8 @@ class Flip(Affine):
         flips: bool | Tuple[bool] | np.ndarray | torch.Tensor,
         flip_centre: Point | Literal['image-centre'] = 'image-centre',
         dim: SpatialDim = 3,
-        **kwargs) -> None:
+        **kwargs,
+        ) -> None:
         # SpatialDim is defined in superclass, but we need to know "scaling" first for parent class.
         # Let parent handle the extension? We can't do this, it'll be confusing talking about
         # "scaling" instead of "flips" to the user.
@@ -32,19 +33,18 @@ class Flip(Affine):
             translation=None,
             **kwargs,
         )
-        self._params = dict(
+        super().set_params(
+            self.__class__.__name__,
             backward_matrix=self._backward_scaling_matrix,
-            dim=self._dim,
             flips=self.__flips,
             matrix=self._scaling_matrix,
-            type=self.__class__.__name__,
         )
 
     def __str__(self) -> str:
-        params = dict(
+        return super().super_str(
+            self.__class__.__name__,
             flips=to_tuple(self.__flips),
         )
-        return super().super_str(self.__class__.__name__, params)
 
 # This might not be a random affine, which expects a scaling range.
 class RandomFlip(RandomAffine):
@@ -57,11 +57,9 @@ class RandomFlip(RandomAffine):
         p_flip = arg_to_list(p_flip, (int, float), broadcast=self._dim)
         assert len(p_flip) == self._dim, f"Expected 'p_flip' of length {self._dim} for dim={self._dim}, got {len(p_flip)}."
         self.__p_flip = to_tensor(p_flip)
-        self._params = dict(
-            dim=self._dim,
-            p=self._p,
+        super().set_params(
+            self.__class__.__name__,
             p_flip=self.__p_flip,
-            type=self.__class__.__name__,
         )
 
     def freeze(self) -> 'Flip':
@@ -77,7 +75,7 @@ class RandomFlip(RandomAffine):
         return super().freeze(Flip, params)
 
     def __str__(self) -> str:
-        params = dict(
+        return super().__str__(
+            self.__class__.__name__,
             p_flip=to_tuple(self.__p_flip, decimals=3),
         )
-        return super().__str__(self.__class__.__name__, params)

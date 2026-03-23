@@ -28,8 +28,9 @@ class BreakAffineChain(SpatialTransform):
         return points
 
     def __str__(self) -> str:
-        params = dict()
-        return super().__str__(self.__class__.__name__, params)
+        return super().__str__(
+            self.__class__.__name__,
+        )
 
     def transform_points(
         self,

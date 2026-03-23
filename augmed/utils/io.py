@@ -1,7 +1,7 @@
 import json
 import nibabel as nib
-import numpy as np
 import nrrd
+import numpy as np
 import os
 import torch
 from typing import Any, List, Tuple
