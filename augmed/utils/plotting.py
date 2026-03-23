@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,10 +5,7 @@ import seaborn as sns
 import torch
 from typing import Literal
 
-from ..typing import (
-    Affine3D, ChannelLabelImage2D, ChannelLabelImage3D, Image2D, Image3D,
-    Point3D, Points3D,
-)
+from ..typing import Affine3D, ChannelLabelImage2D, ChannelLabelImage3D, Image2D, Image3D, Point3D, Points3D
 from .assertions import assert_orientation
 from .conversion import to_numpy
 from .geometry import foreground_fov_centre

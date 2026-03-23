@@ -1,8 +1,10 @@
-from typing import *
+import numpy as np
+import torch
+from typing import Any, Dict, List, Literal
 
-from ..typing import *
-from ..utils.conversion import to_return_format
+from ..typing import Affine, Image, Indices, Number, Points, SamplingGrid, Size, SpatialDim, TransformParams
 from ..utils.args import alias_kwargs, arg_to_list
+from ..utils.conversion import to_return_format
 
 # What is a Transform?
 # Transform defines the API that any (deterministic) Transform

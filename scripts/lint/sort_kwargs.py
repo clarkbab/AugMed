@@ -33,10 +33,10 @@ Notes
   earlier character offsets.
 """
 
-import ast
 import argparse
-import sys
+import ast
 from pathlib import Path
+import sys
 from typing import List, Tuple
 
 SKIP_PATTERNS = {'__pycache__', '.egg-info', 'node_modules', '.git', '.venv', 'venv'}

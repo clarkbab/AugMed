@@ -1,6 +1,4 @@
-from typing import *
-
-from ...typing import *
+from ...typing import Number
 from .intensity import IntensityTransform, RandomIntensityTransform
 
 class RandomNormalise(RandomIntensityTransform):

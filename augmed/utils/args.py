@@ -1,7 +1,9 @@
 from functools import wraps
-from typing import *
+import numpy as np
+import torch
+from typing import Any, Callable, Dict, List, Tuple
 
-from ..typing import *
+from ..typing import Number
 from .conversion import to_list, to_tuple
 from .python import isinstance_generic
 

@@ -1,6 +1,8 @@
-from typing import *
+import numpy as np
+import torch
+from typing import List, Tuple
 
-from ..typing import *
+from ..typing import Affine, Image, Number, Points, TransformParams
 from .python import delegates_to
 
 def to_numpy(

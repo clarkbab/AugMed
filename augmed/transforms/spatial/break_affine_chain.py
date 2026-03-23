@@ -1,8 +1,10 @@
 import numpy as np
+import numpy as np
+import torch
 import torch
 from typing import List
 
-from ...typing import *
+from ...typing import Indices, Points, PointsTensor
 from .spatial import SpatialTransform
 
 # This is really just a utility class for breaking affine chains in the pipeline

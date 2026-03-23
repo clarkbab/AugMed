@@ -1,19 +1,20 @@
 import numpy as np
+import numpy as np
 import torch
-from typing import *
+import torch
+from typing import List, Union
 
-from ..typing import *
+from ..typing import Affine, AffineTensor, Image, Indices, Points, PointsTensor, SamplingGrid, SamplingGridTensor, Size
 from ..utils.args import alias_kwargs, arg_to_list
-from ..utils.conversion import to_numpy, to_return_format, to_tensor, to_tuple
+from ..utils.conversion import to_return_format, to_tensor, to_tuple
 from ..utils.geometry import fov
 from ..utils.grid import grid_points, grid_sample
 from ..utils.logging import logger
-from ..utils.matrix import create_affine
 from ..utils.misc import get_group_device
 from .grid import GridTransform
 from .identity import Identity
 from .intensity import IntensityTransform
-from .spatial import Affine, SpatialTransform
+from .spatial import SpatialTransform
 from .transform import RandomTransform, Transform
 
 # This shouldn't be instantiated by the user.

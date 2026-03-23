@@ -1,8 +1,10 @@
 import numpy as np
+import numpy as np
 import torch
-from typing import *
+import torch
+from typing import Tuple
 
-from ..typing import *
+from ..typing import Affine, AffineTensor, Number, Point, PointTensor, Spacing, SpatialDim
 from .args import arg_to_list
 from .conversion import to_numpy, to_tensor
 

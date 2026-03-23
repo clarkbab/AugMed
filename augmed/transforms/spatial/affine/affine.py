@@ -1,11 +1,13 @@
+import numpy as np
 import torch
-from typing import *
+import torch
+from typing import List, Literal, Tuple
 
-from ....typing import *
+from ....typing import Affine, AffineTensor, Indices, Number, Point, Points, PointsTensor, SamplingGrid, Size
 from ....utils.args import alias_kwargs, arg_to_list, expand_range_arg
-from ....utils.conversion import to_numpy, to_tensor, to_tuple
+from ....utils.conversion import to_tensor, to_tuple
 from ....utils.geometry import fov_centre
-from ....utils.matrix import create_eye, create_scaling, create_rotation, create_translation
+from ....utils.matrix import create_eye, create_rotation, create_scaling, create_translation
 from ..spatial import RandomSpatialTransform, SpatialTransform
 
 # Flip, Rotation, Translation (and others) should probably subclass this.

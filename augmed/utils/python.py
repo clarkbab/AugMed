@@ -1,7 +1,7 @@
 # import ast
 import inspect
 import sys
-from typing import Any, Callable, get_origin, Literal, Tuple, Union
+from typing import Any, Callable, Literal, Tuple, Union, get_origin
 
 from .misc import is_windows
 

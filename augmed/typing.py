@@ -1,6 +1,6 @@
 from jaxtyping import Bool, Float, Int
 import numpy as np
-import torch 
+import torch
 from typing import Dict, Literal, NamedTuple, Optional, Tuple
 
 # First-order types (composed of basic types).

@@ -1,13 +1,12 @@
-from typing import *
+import numpy as np
+import torch
+from typing import Literal, Tuple
 
-from ....typing import *
+from ....typing import Affine, Number, Point, SpatialDim
 from ....utils.args import alias_kwargs, arg_to_list
 from ....utils.conversion import to_tensor, to_tuple
-from ....utils.geometry import fov_centre
-from ....utils.matrix import create_scaling
 from ...identity import Identity
 from ..spatial import RandomSpatialTransform
-from .affine import Affine
         
 class Flip(Affine):
     @alias_kwargs([

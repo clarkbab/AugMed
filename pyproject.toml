@@ -24,3 +24,6 @@ Repository = "https://github.com/clarkbab/augmed"
 
 [tool.setuptools.packages.find]
 include = ["augmed*"]
+
+[tool.setuptools.package-data]
+"augmed.data" = ["*.nii.gz", "*.npz"]

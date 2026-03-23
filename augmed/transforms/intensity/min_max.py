@@ -1,6 +1,7 @@
-from typing import *
+import torch
+from typing import Tuple
 
-from ...typing import *
+from ...typing import ImageTensor, Number
 from ...utils.args import expand_range_arg
 from ...utils.conversion import to_tensor, to_tuple
 from ..identity import Identity

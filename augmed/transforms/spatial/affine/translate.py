@@ -1,10 +1,12 @@
+import numpy as np
 import torch
-from typing import *
+import torch
+from typing import Tuple
 
-from ....typing import *
+from ....typing import Affine, Number
 from ....utils.conversion import to_tensor, to_tuple
 from ...identity import Identity
-from .affine import Affine, RandomAffine
+from .affine import RandomAffine
 
 class Translate(Affine):
     def __init__(

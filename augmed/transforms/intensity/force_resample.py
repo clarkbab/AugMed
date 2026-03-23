@@ -1,6 +1,5 @@
+from ...typing import ImageTensor
 from .intensity import IntensityTransform
-
-from ...typing import *
 
 # This is really just a utility class for triggering resamples in the pipeline
 # for testing purposes. It doesn't actually change intensities.

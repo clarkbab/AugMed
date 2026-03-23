@@ -1,9 +1,10 @@
-from typing import *
+import numpy as np
+import torch
+from typing import List, Literal, Tuple
 
-from ...typing import *
+from ...typing import Affine, AffineTensor, ChannelImageTensor, Indices, Number, Points, PointsTensor, Size
 from ...utils.args import expand_range_arg
-from ...utils.conversion import to_numpy, to_return_format, to_tensor, to_tuple
-from ...utils.grid import grid_sample
+from ...utils.conversion import to_return_format, to_tensor, to_tuple
 from ...utils.logging import logger
 from ...utils.matrix import affine_origin, affine_spacing, create_affine
 from ..identity import Identity

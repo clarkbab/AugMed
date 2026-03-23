@@ -1,6 +1,8 @@
-from typing import *
+import numpy as np
+import torch
+from typing import List
 
-from ...typing import *
+from ...typing import Affine, Image, SamplingGridTensor
 from ...utils.args import alias_kwargs, arg_to_list
 from ...utils.conversion import to_return_format, to_tensor
 from ...utils.misc import get_group_device
