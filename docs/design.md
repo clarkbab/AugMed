@@ -2,8 +2,16 @@
 
 TODO:
 - Benchmark in comparison with other libraries: torchio, albumentations, monai, torchvision.
+  - Monai is much faster than AugMed for 3D, but we haven't optimised yet.
 - Create test suite.
 - Get some alpha/beta testing.
+
+OPTIMISATIONS (from profiling):
+- Grid sample is very slow. Why doesn't monai have this problem? 
+
+OPTIMISATIONS (potential)
+- Pre-interpolate the coarse b-spline grid to full resolution using separable 1D convolutions (like MONAI).
+- Reduce materialised tensors (avoid creating the 8.4M, 64, 3 intermediate).
 
 ### API
 

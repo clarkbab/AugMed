@@ -5,7 +5,7 @@ from typing import List, Literal, Tuple
 from ...typing import AffineMatrix, Indices, Number, Point, Points, SamplingGridTensor, Size
 from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
-from ...utils.geometry import fov, fov_centre, to_image_coords, to_world_coords
+from ...utils.geometry import fov, fov_centre, to_world_coords
 from ...utils.matrix import affine_origin, affine_spacing, create_affine
 from ..identity import Identity, get_group_device
 from .grid import GridTransform, RandomGridTransform

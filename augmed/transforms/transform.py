@@ -74,10 +74,10 @@ class Transform:
         ) -> None:
         # Put transform type first.
         self._params = dict(
-            type=type,
+            device=self._device,
             **params,
             dim=self._dim,
-            device=self._device,
+            type=type,
         )
 
     def __str__(

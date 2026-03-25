@@ -8,7 +8,7 @@ from typing import Literal
 from ..typing import AffineMatrix3D, AffineMatrix3DArray, BatchLabelImage3DArray, ChannelLabelImage2D, ChannelLabelImage3D, Image2D, Image3D, Number, Orientation, Points, Points3D, Points3DArray, Size3DArray
 from .assertions import assert_orientation
 from .conversion import to_numpy
-from .geometry import foreground_fov_centre, to_image_coords
+from .geometry import com, foreground_fov_centre, fov, to_image_coords
 from .logging import logger
 from .matrix import affine_origin, affine_spacing
 
@@ -69,8 +69,7 @@ def plot_hist(
     x_label: str | None = None,
     y_label: str | None = None,
     ) -> mpl.axes.Axes:
-    if isinstance(data, torch.Tensor):
-        data = data.cpu().numpy()
+    data = to_numpy(data)
     if ax is None:
         ax = plt.gca()
         show = True
@@ -108,7 +107,7 @@ def plot_slice(
     x_label: str | None = None,
     x_origin: Literal['lower', 'upper'] | None = 'lower',
     y_label: str | None = None,
-    y_origin: Literal['lower', 'upper'] | None = 'lower',
+    y_origin: Literal['lower', 'upper'] | None = 'upper',
     ) -> mpl.axes.Axes:
     if isinstance(data, torch.Tensor):
         data = data.cpu().numpy()
@@ -121,7 +120,7 @@ def plot_slice(
         show = False
 
     # Plot slice.
-    ax.imshow(data.T, cmap=cmap, vmax=vmax, vmin=vmin, origin=y_origin)
+    ax.imshow(data.T, cmap=cmap, origin=y_origin, vmax=vmax, vmin=vmin)
 
     # Plot labels.
     if labels is not None:
@@ -162,6 +161,7 @@ def plot_volume(
     figsize: tuple[float, float] = (16, 6),
     idx: int | float | str | None = None,
     labels: ChannelLabelImage3D | None = None,
+    centre_method: Literal['com', 'fov'] = 'com',
     orientation: Orientation = 'LPS',
     label_alpha: float = 0.3,
     points: Points3D | None = None,
@@ -198,7 +198,7 @@ def plot_volume(
     axs = axs[0]
 
     for col_ax, v in zip(axs, views):
-        resolved_idx = _get_view_idx(v, data.shape, affine=affine, idx=idx, labels=labels, points=points)
+        resolved_idx = _get_view_idx(v, data.shape, affine=affine, centre_method=centre_method, idx=idx, labels=labels, points=points)
         image = _get_view_slice(v, data, resolved_idx)
         aspect = _get_view_aspect(v, affine)
         origin_x, origin_y = _get_view_origin(v, orientation=orientation)
@@ -292,6 +292,7 @@ def _get_view_idx(
     affine: AffineMatrix3DArray | None = None,
     idx: int | float | str | None = None,
     labels: BatchLabelImage3DArray | None = None,
+    centre_method: Literal['com', 'fov'] = 'com',
     points: Points3DArray | None = None,
     ) -> int:
     # Default to middle slice.
@@ -323,7 +324,12 @@ def _get_view_idx(
     if source == 'labels':
         if labels is None:
             raise ValueError(f"idx='{idx}' but no labels were provided.")
-        centre = foreground_fov_centre(labels[int(value)], affine=affine)
+        if centre_method == 'com':
+            centre = com(labels[int(value)], affine=affine)
+        elif centre_method == 'fov':
+            centre = foreground_fov_centre(labels[int(value)], affine=affine)
+        else:
+            raise ValueError(f"Unknown centre_method '{centre_method}'. Expected 'com' or 'fov'.")
 
     # Points.
     elif source == 'points':

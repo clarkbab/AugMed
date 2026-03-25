@@ -198,11 +198,11 @@ def _expand_star_import(
             check = asname or mod.split('.')[0]
             if check in used_names:
                 extra.append(_Import(
-                    is_from=False,
-                    module=mod,
-                    level=0,
-                    names=[(mod, asname)],
                     alias=asname,
+                    is_from=False,
+                    level=0,
+                    module=mod,
+                    names=[(mod, asname)],
                     raw='',
                 ))
     else:
@@ -385,18 +385,18 @@ class _Import:
         self.raw = raw
 
     @property
+    def full_module(self) -> str:
+        """Dotted module string with leading dots."""
+        dots = '.' * self.level
+        return dots + (self.module or '')
+
+    @property
     def is_relative(self) -> bool:
         return self.level > 0
 
     @property
     def is_star(self) -> bool:
         return len(self.names) == 1 and self.names[0][0] == '*'
-
-    @property
-    def full_module(self) -> str:
-        """Dotted module string with leading dots."""
-        dots = '.' * self.level
-        return dots + (self.module or '')
 
     def __repr__(self) -> str:
         return f'_Import({self.raw!r})'
@@ -420,21 +420,21 @@ def _parse_imports(source: str, start: int, end: int, lines: List[str]) -> List[
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imp = _Import(
-                    is_from=False,
-                    module=alias.name,
-                    level=0,
-                    names=[(alias.name, alias.asname)],
                     alias=alias.asname,
+                    is_from=False,
+                    level=0,
+                    module=alias.name,
+                    names=[(alias.name, alias.asname)],
                     raw=_reconstruct_import(node, lines),
                 )
                 imports.append(imp)
         else:
             imp = _Import(
-                is_from=True,
-                module=node.module or '',
-                level=node.level,
-                names=[(a.name, a.asname) for a in node.names],
                 alias=None,
+                is_from=True,
+                level=node.level,
+                module=node.module or '',
+                names=[(a.name, a.asname) for a in node.names],
                 raw=_reconstruct_import(node, lines),
             )
             imports.append(imp)
@@ -559,11 +559,11 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
             expanded.extend(extra_imports)
             if replacement:
                 imp = _Import(
-                    is_from=True,
-                    module=imp.module,
-                    level=imp.level,
-                    names=[(n, None) for n in replacement],
                     alias=None,
+                    is_from=True,
+                    level=imp.level,
+                    module=imp.module,
+                    names=[(n, None) for n in replacement],
                     raw=imp.raw,
                 )
             else:
@@ -599,11 +599,11 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
 
             if kept:
                 imp = _Import(
-                    is_from=True,
-                    module=imp.module,
-                    level=imp.level,
-                    names=kept,
                     alias=None,
+                    is_from=True,
+                    level=imp.level,
+                    module=imp.module,
+                    names=kept,
                     raw=imp.raw,
                 )
                 cleaned.append(imp)
@@ -640,11 +640,11 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
                 kept.append((name, asname))
         if kept:
             imp = _Import(
-                is_from=True,
-                module=imp.module,
-                level=imp.level,
-                names=kept,
                 alias=None,
+                is_from=True,
+                level=imp.level,
+                module=imp.module,
+                names=kept,
                 raw=imp.raw,
             )
             deduped.append(imp)
@@ -689,11 +689,11 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
                     if imp.is_from and imp.full_module == key:
                         new_names = list(imp.names) + [(n, None) for n in to_add]
                         cleaned[i] = _Import(
-                            is_from=True,
-                            module=imp.module,
-                            level=imp.level,
-                            names=new_names,
                             alias=None,
+                            is_from=True,
+                            level=imp.level,
+                            module=imp.module,
+                            names=new_names,
                             raw=imp.raw,
                         )
                         missing -= to_add
@@ -713,11 +713,11 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
                     new_names = list(imp.names) + [(n, None) for n in to_add]
                     idx = cleaned.index(imp)
                     cleaned[idx] = _Import(
-                        is_from=True,
-                        module=imp.module,
-                        level=imp.level,
-                        names=new_names,
                         alias=None,
+                        is_from=True,
+                        level=imp.level,
+                        module=imp.module,
+                        names=new_names,
                         raw=imp.raw,
                     )
                     missing -= to_add

@@ -10,9 +10,21 @@ def to_numpy(
     broadcast: int | None = None,
     device: torch.device | None = None,
     dtype: torch.dtype | None = None,
-    ) -> np.ndarray | None:
+    return_device: bool = False,
+    return_type: bool = False,
+    ) -> np.ndarray | Tuple[np.ndarray | type] | None:
     if data is None:
+        if return_type and return_device:
+            return None, None, None
+        elif return_type or return_device:
+            return None, None
         return None
+
+    # Record input type.
+    if return_type:
+        input_type = type(data)
+    if return_device:
+        input_device = data.device if isinstance(data, torch.Tensor) else None
 
     # Convert data to array.
     if isinstance(data, (bool, float, int, str)):
@@ -32,7 +44,12 @@ def to_numpy(
     if broadcast is not None and len(data) == 1:
         data = np.repeat(data, broadcast)
 
-    return data
+    if return_type and return_device:
+        return data, input_type, input_device
+    elif return_type or return_device:
+        return data, input_type if return_type else input_device
+    else:
+        return data
 
 @delegates_to(to_numpy)
 def to_list(

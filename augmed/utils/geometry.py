@@ -1,10 +1,30 @@
 import numpy as np
+import scipy
 import torch
 import torch
 
-from ..typing import AffineMatrix, AffineMatrixTensor, Box, BoxTensor, LabelImage, Pixel, PixelsTensor, PixelTensor, Point, PointsTensor, PointTensor, Size, Voxel, VoxelsTensor, VoxelTensor
+from ..typing import AffineMatrix, AffineMatrixTensor, Box, BoxTensor, Image, LabelImage, Pixel, PixelsTensor, PixelTensor, Point, PointsTensor, PointTensor, Size, Voxel, VoxelsTensor, VoxelTensor
 from .conversion import to_numpy, to_tensor
 from .matrix import affine_origin, affine_spacing
+
+def com(
+    data: Image,
+    affine: AffineMatrix | None = None,
+    ) -> Point | Pixel | Voxel:
+    if data.sum() == 0:
+        return None 
+
+    data, return_type, return_device = to_numpy(data, return_device=True, return_type=True)
+
+    # Compute the centre of mass.
+    com = scipy.ndimage.center_of_mass(data)
+    if affine is not None:
+        com = to_world_coords(com, affine)
+
+    if return_type is torch.Tensor:
+        com = to_tensor(com, device=return_device, dtype=torch.float32)
+
+    return com
 
 def foreground_fov(
     data: LabelImage,

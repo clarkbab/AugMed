@@ -5,7 +5,7 @@ from typing import List, Literal, Tuple
 from ...typing import AffineMatrix, Indices, Number, Points, SamplingGridTensor, Size
 from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg, to_tuple
 from ...utils.conversion import to_return_format, to_tensor
-from ...utils.geometry import fov, fov_centre, to_image_coords, to_world_coords
+from ...utils.geometry import fov, fov_centre, to_world_coords
 from ...utils.matrix import affine_origin, affine_spacing, create_affine
 from ..identity import Identity, get_group_device
 from .grid import GridTransform, RandomGridTransform
@@ -52,9 +52,9 @@ class Pad(GridTransform):
     def __str__(self) -> str:
         return super().__str__(
             self.__class__.__name__,
+            add=to_tuple(self.__add.flatten(), decimals=3) if self.__add is not None else None,
             centre=to_tuple(self.__centre, decimals=3),
             centre_offset=to_tuple(self.__centre_offset.flatten(), decimals=3) if self.__centre_offset is not None else None,
-            add=to_tuple(self.__add.flatten(), decimals=3) if self.__add is not None else None,
             margin=to_tuple(self.__margin.flatten(), decimals=3) if self.__margin is not None else None,
         )
 

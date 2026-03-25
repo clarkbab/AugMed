@@ -41,7 +41,7 @@ from pathlib import Path
 import time
 import torch
 import tracemalloc
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Tuple
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -70,8 +70,26 @@ LIBRARY_DIMS = {
     'torchio': [2, 3],         # 2-D slices promoted to (C, 1, H, W) pseudo-volumes.
 }
 
+# Which devices each library supports.
+LIBRARY_DEVICES = {
+    'augmed': ['cpu', 'cuda'],
+    'monai': ['cpu', 'cuda'],  # GPU-native via torch.nn.functional.grid_sample.
+    'torchio': ['cpu'],        # CPU-only — uses SimpleITK / NumPy under the hood.
+}
+
 # Shared transform parameters that are as close as possible across
 # libraries so the workloads are comparable.
+CT_SHAPE_3D = (512, 512, 107)    # expected 3-D input volume shape
+CT_SPACING_3D = (1.12, 1.12, 3.0) # expected 3-D voxel spacing (mm)
+CT_SHAPE_2D = (512, 512)         # expected 2-D slice shape
+CT_SPACING_2D = (1.12, 1.12)     # expected 2-D pixel spacing (mm)
+
+# Augmed crop output sizes (derived from CT_SHAPE / CROP_REMOVE_MM / spacing).
+# 3D: 512 - 2*ceil(20/1.12) = 476, 107 - 2*ceil(20/3) = 93
+# 2D: 512 - 2*ceil(20/1.12) = 476
+CROP_OUTPUT_3D = (476, 476, 93)
+CROP_OUTPUT_2D = (476, 476)
+
 CROP_REMOVE_MM = 20.0           # mm to remove per side
 ROTATION_DEG = 15.0             # max rotation per axis in degrees
 SCALING_RANGE = (0.8, 1.2)
@@ -93,26 +111,53 @@ def load_data(device: torch.device, dim: int) -> Dict[str, Any]:
 
 
 def _load_data_2d(device: torch.device) -> Dict[str, Any]:
-    """Generate a synthetic 2-D slice."""
-    size = (256, 256)
-    spacing = (1.0, 1.0)
-    ct_data = torch.randn(size, device=device, dtype=torch.float32) * 400 + 40
-    affine = torch.eye(3, device=device, dtype=torch.float32)
-    for i in range(2):
-        affine[i, i] = spacing[i]
-    labels = (ct_data > 200).unsqueeze(0)               # (1, H, W)
-    n_points = 500
-    points = torch.rand(n_points, 2, device=device) * torch.tensor(
-        [s * d for s, d in zip(spacing, size)], device=device,
-    )
+    """Load the example CT and extract the middle axial slice."""
+    try:
+        from augmed.data.examples import load_example_ct
+        ct_3d, affine_3d, labels_3d, points_3d = load_example_ct()
+
+        # Middle axial slice.
+        mid = ct_3d.shape[2] // 2
+        ct_data = torch.as_tensor(ct_3d[:, :, mid], device=device, dtype=torch.float32)
+        labels = torch.as_tensor(labels_3d[..., mid], device=device, dtype=torch.bool)
+
+        # 2D affine: rows/cols 0-1 of the 3D affine, plus translation.
+        a = torch.as_tensor(affine_3d, device=device, dtype=torch.float32)
+        affine = torch.zeros(3, 3, device=device, dtype=torch.float32)
+        affine[:2, :2] = a[:2, :2]
+        affine[:2, 2] = a[:2, 3]
+        affine[2, 2] = 1.0
+
+        # Points: filter those near the middle slice, keep only x/y.
+        p = torch.as_tensor(points_3d, device=device, dtype=torch.float32)
+        slice_z = float(a[2, 3]) + mid * float(a[2, 2])
+        half_thick = abs(float(a[2, 2])) / 2
+        mask = (p[:, 2] >= slice_z - half_thick) & (p[:, 2] <= slice_z + half_thick)
+        points = p[mask][:, :2]
+        if len(points) == 0:
+            points = p[:, :2]  # fallback: just drop Z
+    except Exception:
+        print('  [info] load_example_ct() unavailable — using synthetic 2D data.')
+        size = CT_SHAPE_2D
+        spacing = CT_SPACING_2D
+        ct_data = torch.randn(size, device=device, dtype=torch.float32) * 400 + 40
+        affine = torch.eye(3, device=device, dtype=torch.float32)
+        for i in range(2):
+            affine[i, i] = spacing[i]
+        labels = (ct_data > 200).unsqueeze(0)
+        n_points = 500
+        points = torch.rand(n_points, 2, device=device) * torch.tensor(
+            [s * d for s, d in zip(spacing, size)], device=device,
+        )
     return dict(affine=affine, ct_data=ct_data, labels=labels, points=points)
 
 
 def _load_data_3d(device: torch.device) -> Dict[str, Any]:
     """Load (or generate) a representative 3-D CT volume."""
     try:
-        from augmed.utils.examples import load_example_ct
+        from augmed.data.examples import load_example_ct
         ct_data, affine, labels, points = load_example_ct()
+        assert ct_data.shape == CT_SHAPE_3D, f'Expected CT shape {CT_SHAPE_3D}, got {ct_data.shape}'
         ct_data = torch.as_tensor(ct_data, device=device, dtype=torch.float32)
         affine = torch.as_tensor(affine, device=device, dtype=torch.float32)
         labels = torch.as_tensor(labels, device=device, dtype=torch.bool)
@@ -120,8 +165,8 @@ def _load_data_3d(device: torch.device) -> Dict[str, Any]:
     except Exception:
         # Fallback: synthetic volume that exercises the same code paths.
         print('  [info] load_example_ct() unavailable — using synthetic data.')
-        size = (256, 256, 128)
-        spacing = (1.0, 1.0, 2.5)
+        size = CT_SHAPE_3D
+        spacing = CT_SPACING_3D
         ct_data = torch.randn(size, device=device, dtype=torch.float32) * 400 + 40
         affine = torch.eye(4, device=device, dtype=torch.float32)
         for i in range(3):
@@ -171,22 +216,37 @@ def _build_augmed_pipeline(steps: List[str], *, device: torch.device, dim: int) 
     return Pipeline(transforms, device=device, dim=dim, seed=42)
 
 
-def run_augmed(
-    data: Dict[str, Any],
+def build_augmed(
+    steps: List[str],
+    *,
     dim: int,
     device: torch.device,
     input_mode: str,
-    steps: List[str],
-) -> None:
+    data: Dict[str, Any],
+) -> Tuple[Any, Callable[[], None]]:
+    """Build an augmed pipeline and return (pipeline, run_fn)."""
     pipeline = _build_augmed_pipeline(steps, device=device, dim=dim)
     inputs = [data['ct_data']]
     if input_mode in ('image-labels', 'image-labels-points'):
         inputs.append(data['labels'])
     if input_mode == 'image-labels-points':
         inputs.append(data['points'])
-    pipeline.transform(*inputs, affine=data['affine'])
-    if device.type == 'cuda':
-        torch.cuda.synchronize()
+
+    expected_crop = CROP_OUTPUT_2D if dim == 2 else CROP_OUTPUT_3D
+
+    def run() -> None:
+        pipeline.transform(*inputs, affine=data['affine'])
+        if device.type == 'cuda':
+            torch.cuda.synchronize()
+
+    # Verify output shape on a test run.
+    result = pipeline.transform(*inputs, affine=data['affine'])
+    if isinstance(result, list):
+        result = result[0]
+    actual = tuple(result.shape[-dim:])
+    assert actual == expected_crop, f'augmed output spatial shape {actual} != expected {expected_crop}'
+
+    return pipeline, run
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +267,7 @@ def _build_monai_image_pipeline(
         ScaleIntensityRange,
     )
 
-    roi_size = [156, 156] if dim == 2 else [156, 156, 78]
+    roi_size = list(CROP_OUTPUT_2D) if dim == 2 else list(CROP_OUTPUT_3D)
     n_spatial = dim
     rot_range = [np.deg2rad(ROTATION_DEG)] * (1 if dim == 2 else 3)
 
@@ -254,7 +314,7 @@ def _build_monai_dict_pipeline(
         ScaleIntensityRanged,
     )
 
-    roi_size = [156, 156] if dim == 2 else [156, 156, 78]
+    roi_size = list(CROP_OUTPUT_2D) if dim == 2 else list(CROP_OUTPUT_3D)
     n_spatial = dim
     rot_range = [np.deg2rad(ROTATION_DEG)] * (1 if dim == 2 else 3)
 
@@ -330,27 +390,45 @@ def _monai_elastic_transform_d(*, dim: int) -> Any:
     )
 
 
-def run_monai(
-    data: Dict[str, Any],
+def build_monai(
+    steps: List[str],
+    *,
     dim: int,
     device: torch.device,
     input_mode: str,
-    steps: List[str],
-) -> None:
+    data: Dict[str, Any],
+) -> Tuple[Any, Callable[[], None]]:
+    """Build a MONAI pipeline and return (pipeline, run_fn)."""
     # Add channel dim — MONAI expects (C, *spatial).
-    img = data['ct_data'].unsqueeze(0).cpu().numpy()
+    img = data['ct_data'].unsqueeze(0)
     if input_mode == 'image':
         pipeline = _build_monai_image_pipeline(steps, device=device, dim=dim)
-        pipeline(img)
+
+        def run() -> None:
+            pipeline(img)
+            if device.type == 'cuda':
+                torch.cuda.synchronize()
     else:
         pipeline = _build_monai_dict_pipeline(steps, device=device, dim=dim)
         sample = {
             'image': img,
-            'label': data['labels'].cpu().numpy(),   # already (1, *spatial)
+            'label': data['labels'],
         }
-        pipeline(sample)
-    if device.type == 'cuda':
-        torch.cuda.synchronize()
+
+        def run() -> None:
+            pipeline(sample)
+            if device.type == 'cuda':
+                torch.cuda.synchronize()
+
+    # Verify output shape on a test run.
+    expected_crop = CROP_OUTPUT_2D if dim == 2 else CROP_OUTPUT_3D
+    if 'crop' in steps:
+        result = pipeline(img) if input_mode == 'image' else pipeline(sample)
+        out = result if isinstance(result, torch.Tensor) else result['image']
+        actual = tuple(out.shape[-dim:])
+        assert actual == expected_crop, f'MONAI output spatial shape {actual} != expected {expected_crop}'
+
+    return pipeline, run
 
 
 # ---------------------------------------------------------------------------
@@ -360,15 +438,21 @@ def run_monai(
 def _build_torchio_pipeline(steps: List[str], *, device: torch.device, dim: int) -> Any:
     import torchio as tio
 
-    crop_amount = int(CROP_REMOVE_MM)
+    # Compute per-axis voxel crop to match augmed output sizes.
     transforms = []
     for s in steps:
         if s == 'crop':
             if dim == 2:
-                # (D, H, W) bounds — don't crop singleton depth axis.
-                transforms.append(tio.Crop((0, 0, crop_amount, crop_amount, crop_amount, crop_amount)))
+                # 2-D slices are promoted to (C, 1, H, W) — don't crop the
+                # singleton depth axis.
+                cy = (CT_SHAPE_2D[0] - CROP_OUTPUT_2D[0]) // 2
+                cx = (CT_SHAPE_2D[1] - CROP_OUTPUT_2D[1]) // 2
+                transforms.append(tio.Crop((0, 0, cy, cy, cx, cx)))
             else:
-                transforms.append(tio.Crop(crop_amount))
+                cx = (CT_SHAPE_3D[0] - CROP_OUTPUT_3D[0]) // 2
+                cy = (CT_SHAPE_3D[1] - CROP_OUTPUT_3D[1]) // 2
+                cz = (CT_SHAPE_3D[2] - CROP_OUTPUT_3D[2]) // 2
+                transforms.append(tio.Crop((cx, cx, cy, cy, cz, cz)))
         elif s == 'affine':
             transforms.append(tio.RandomAffine(
                 degrees=ROTATION_DEG,
@@ -387,13 +471,15 @@ def _build_torchio_pipeline(steps: List[str], *, device: torch.device, dim: int)
     return tio.Compose(transforms)
 
 
-def run_torchio(
-    data: Dict[str, Any],
+def build_torchio(
+    steps: List[str],
+    *,
     dim: int,
     device: torch.device,
     input_mode: str,
-    steps: List[str],
-) -> None:
+    data: Dict[str, Any],
+) -> Tuple[Any, Callable[[], None]]:
+    """Build a TorchIO pipeline and return (pipeline, run_fn)."""
     import torchio as tio
 
     pipeline = _build_torchio_pipeline(steps, device=device, dim=dim)
@@ -411,9 +497,24 @@ def run_torchio(
             lbl_tensor = lbl_tensor.unsqueeze(1)         # (1, 1, H, W)
         kwargs['label'] = tio.LabelMap(tensor=lbl_tensor)
     subject = tio.Subject(**kwargs)
-    pipeline(subject)
-    if device.type == 'cuda':
-        torch.cuda.synchronize()
+
+    def run() -> None:
+        pipeline(subject)
+        if device.type == 'cuda':
+            torch.cuda.synchronize()
+
+    # Verify output shape on a test run.
+    if 'crop' in steps:
+        expected_crop = CROP_OUTPUT_2D if dim == 2 else CROP_OUTPUT_3D
+        result = pipeline(subject)
+        out_shape = tuple(result.image.shape)   # (C, D, H, W) or (C, 1, H, W)
+        if dim == 2:
+            actual = out_shape[-2:]  # last two spatial dims
+        else:
+            actual = out_shape[-3:]  # last three spatial dims
+        assert actual == expected_crop, f'TorchIO output spatial shape {actual} != expected {expected_crop}'
+
+    return pipeline, run
 
 
 # ---------------------------------------------------------------------------
@@ -454,10 +555,10 @@ def _measure_run(
 # Main benchmark loop
 # ---------------------------------------------------------------------------
 
-LIBRARY_RUNNERS = {
-    'augmed': run_augmed,
-    'monai': run_monai,
-    'torchio': run_torchio,
+LIBRARY_BUILDERS = {
+    'augmed': build_augmed,
+    'monai': build_monai,
+    'torchio': build_torchio,
 }
 
 
@@ -484,24 +585,52 @@ def benchmark(
 
             for pipe_name, steps in PIPELINE_DEFS.items():
                 for input_mode in INPUTS:
-                    for lib_name, runner in LIBRARY_RUNNERS.items():
+                    for lib_name, builder in LIBRARY_BUILDERS.items():
                         # Skip unsupported inputs.
                         if input_mode not in LIBRARY_INPUTS[lib_name]:
                             continue
                         # Skip unsupported dimensionalities.
                         if dim not in LIBRARY_DIMS[lib_name]:
                             continue
+                        # Skip unsupported devices.
+                        if str(device) not in LIBRARY_DEVICES[lib_name]:
+                            continue
 
                         label = (f'{lib_name} / {pipe_name} / {input_mode}'
                                  f' / {dim}D / {device}')
                         print(f'\n  {label}')
+
+                        # ---- build pipeline once ----
+                        try:
+                            _pipeline, run_fn = builder(
+                                steps,
+                                data=data,
+                                device=device,
+                                dim=dim,
+                                input_mode=input_mode,
+                            )
+                        except Exception as exc:
+                            print(f'    SKIP build ({type(exc).__name__}: {exc})')
+                            rows.append(dict(
+                                device=str(device),
+                                dim=dim,
+                                error=str(last_exc),
+                                input=input_mode,
+                                library=lib_name,
+                                peak_ram_mb=None,
+                                peak_vram_mb=None,
+                                pipeline=pipe_name,
+                                run=None,
+                                time=None,
+                            ))
+                            continue
 
                         # ---- warmup ----
                         ok = True
                         last_exc = None
                         for w in range(warmup):
                             try:
-                                runner(data, dim, device, input_mode, steps)
+                                run_fn()
                             except Exception as exc:
                                 print(f'    SKIP ({type(exc).__name__}: {exc})')
                                 last_exc = exc
@@ -524,12 +653,7 @@ def benchmark(
 
                         # ---- timed runs ----
                         for r in range(n_runs):
-                            metrics = _measure_run(
-                                lambda _r=runner, _d=data, _dm=dim,
-                                       _dev=device, _im=input_mode, _s=steps:
-                                    _r(_d, _dm, _dev, _im, _s),
-                                device,
-                            )
+                            metrics = _measure_run(run_fn, device)
                             rows.append(dict(
                                 device=str(device),
                                 dim=dim,
@@ -548,6 +672,16 @@ def benchmark(
                                   f'VRAM {metrics["peak_vram_mb"]:.1f} MB')
 
     df = pd.DataFrame(rows)
+
+    # TorchIO is CPU-only (SimpleITK).  Copy its CPU results into the CUDA
+    # rows so all three libraries appear side-by-side in CUDA comparisons.
+    if torch.cuda.is_available():
+        tio_cpu = df[(df['library'] == 'torchio') & (df['device'] == 'cpu')].copy()
+        if not tio_cpu.empty:
+            tio_cpu['device'] = 'cuda'
+            tio_cpu['peak_vram_mb'] = 0.0
+            df = pd.concat([df, tio_cpu], ignore_index=True)
+
     return df
 
 
@@ -590,13 +724,16 @@ def main() -> None:
     output = args.output
     if output is None:
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output = str(Path(__file__).parent / f'results_{ts}.csv')
+        output = str(Path(__file__).parent / f'benchmark_{ts}.csv')
 
     print(f'Running benchmark: {args.warmup} warmup + {args.n_runs} timed runs per config')
+    wall_t0 = time.perf_counter()
     df = benchmark(n_runs=args.n_runs, warmup=args.warmup)
+    wall_elapsed = time.perf_counter() - wall_t0
     df.to_csv(output, index=False)
     print(f'\nResults saved to {output}')
     print_summary(df)
+    print(f'\nTotal wall-clock time: {wall_elapsed:.1f}s')
 
 
 if __name__ == '__main__':
