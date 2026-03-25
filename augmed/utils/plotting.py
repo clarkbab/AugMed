@@ -101,6 +101,7 @@ def plot_slice(
     ax: mpl.axes.Axes | None = None,
     cmap: str = 'gray',
     labels: ChannelLabelImage2D | None = None,
+    show_hist: bool = False,
     title: str | None = None,
     vmin: float | None = None,
     vmax: float | None = None,
@@ -114,40 +115,48 @@ def plot_slice(
     if isinstance(labels, torch.Tensor):
         labels = labels.cpu().numpy()
     if ax is None:
-        ax = plt.gca()
+        if show_hist:
+            _, axs = plt.subplots(1, 2, figsize=(12, 6))
+        else:
+            axs = [plt.gca()]
         show = True
     else:
+        axs = [ax]
         show = False
 
     # Plot slice.
-    ax.imshow(data.T, cmap=cmap, origin=y_origin, vmax=vmax, vmin=vmin)
+    axs[0].imshow(data.T, cmap=cmap, origin=y_origin, vmax=vmax, vmin=vmin)
 
     # Plot labels.
     if labels is not None:
         palette = sns.color_palette('colorblind', len(labels))
         for i, l in enumerate(labels):
             cmap_label = mpl.colors.ListedColormap(((1, 1, 1, 0), palette[i]))
-            ax.imshow(l.T, alpha=alpha, cmap=cmap_label)
-            ax.contour(l.T, colors=[palette[i]], levels=[.5], linestyles='solid')
+            axs[0].imshow(l.T, alpha=alpha, cmap=cmap_label)
+            axs[0].contour(l.T, colors=[palette[i]], levels=[.5], linestyles='solid')
+
+    # Add histogram.
+    if show_hist:
+        axs[1].hist(data.flatten(), bins=50, color='gray')
 
     # Hide axis spines and ticks.
     for p in ['right', 'top', 'bottom', 'left']:
-        ax.spines[p].set_visible(False)
-    ax.set_xticks([])
-    ax.set_yticks([])
+        axs[0].spines[p].set_visible(False)
+    axs[0].set_xticks([])
+    axs[0].set_yticks([])
 
     # Add text.
     if title is not None:
-        ax.set_title(title)
+        axs[0].set_title(title)
     if x_label is not None:
-        ax.set_xlabel(x_label)
+        axs[0].set_xlabel(x_label)
     if y_label is not None:
-        ax.set_ylabel(y_label)
+        axs[0].set_ylabel(y_label)
 
     if show:
         plt.show()
 
-    return ax
+    return axs[0]
 
 def plot_volume(
     data: Image3D,
