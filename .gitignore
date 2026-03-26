@@ -1,5 +1,7 @@
 benchmark_*.csv
+benchmark_*.txt
 profile_*.csv
+profile_*.txt
 dist
 *.egg-info
 __pycache__

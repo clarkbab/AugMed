@@ -202,6 +202,12 @@ def process_file(path: Path, *, fix: bool = False) -> int:
     except (UnicodeDecodeError, PermissionError):
         return 0
 
+    try:
+        ast.parse(source)
+    except SyntaxError as exc:
+        print(f'  Syntax error in {path} (line {exc.lineno}): {exc.msg}')
+        return 0
+
     new_source, n = sort_kwargs(source)
     if n == 0:
         return 0
@@ -234,7 +240,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description='Sort keyword arguments in function calls alphabetically.')
     parser.add_argument(
-        'paths', default=['.'], help='Files or directories to process (default: cwd)',
+        'paths', default=['augmed', 'scripts'], help='Files or directories to process',
         nargs='*')
     parser.add_argument(
         '--fix', action='store_true',

@@ -44,6 +44,27 @@ if sys.path and sys.path[0] == _script_dir:
 else:
     import cProfile
 
+
+class _Tee:
+    """Write to both an original stream and a log file, flushing after each write."""
+
+    def __init__(self, stream, log_file):
+        self._stream = stream
+        self._log_file = log_file
+
+    def write(self, data):
+        self._stream.write(data)
+        self._stream.flush()
+        self._log_file.write(data)
+        self._log_file.flush()
+
+    def flush(self):
+        self._stream.flush()
+        self._log_file.flush()
+
+    def fileno(self):
+        return self._stream.fileno()
+
 # ---------------------------------------------------------------------------
 # Shared configuration (mirrors benchmark.py)
 # ---------------------------------------------------------------------------
@@ -431,38 +452,16 @@ def cprofile_run(
 # CLI + main
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description='Profile augmed transform pipelines.',
-    )
-    parser.add_argument(
-        '--n-runs', default=5, help='Number of profiled runs per config (default: 5)',
-        type=int,
-    )
-    parser.add_argument(
-        '--output', default=None, help='Output CSV path (default: profile_<timestamp>.csv next to this script)',
-        type=str,
-    )
-    parser.add_argument(
-        '--save-prof', action='store_true',
-        help='Save .prof files for external tools (snakeviz, etc.)',
-    )
-    parser.add_argument(
-        '--top', default=40, help='Number of top cProfile entries to show (default: 40)',
-        type=int,
-    )
-    args = parser.parse_args()
-
+def _run(args: argparse.Namespace) -> None:
+    """Core profiling logic — called either directly or from main()."""
     n_runs = args.n_runs
 
     devices = [torch.device('cpu')]
     if torch.cuda.is_available():
         devices.append(torch.device('cuda'))
 
-    output = args.output
-    if output is None:
-        ts_file = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output = str(Path(__file__).parent / f'profile_{ts_file}.csv')
+    ts_file = datetime.now().strftime('%Y%m%d_%H%M%S')
+    output = str(Path(__file__).parent / f'profile_{n_runs}_{ts_file}.csv')
 
     # Text file for detailed cProfile output (same base name as CSV).
     output_txt = output.rsplit('.', 1)[0] + '.txt'
@@ -552,6 +551,29 @@ def main() -> None:
     print(f'cProfile details saved to {output_txt}')
     print(f'Total wall-clock time: {wall_elapsed:.1f}s')
 
+def main() -> None:
+    parser = argparse.ArgumentParser(description='Profile augmed transform pipelines.')
+    parser.add_argument('--n-runs', default=3, help='Number of profiled runs per config (default: 3)', type=int)
+    parser.add_argument('--save-prof', action='store_true', help='Save .prof files for external tools (snakeviz, etc.)')
+    parser.add_argument('--top', default=40, help='Number of top cProfile entries to show (default: 40)', type=int)
+    args = parser.parse_args()
+
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    base = Path(__file__).parent / f'profile_{args.n_runs}_{ts}'
+    stdout_log = str(base.with_name(base.name + '_stdout.txt'))
+    stderr_log = str(base.with_name(base.name + '_stderr.txt'))
+
+    # Tee stdout/stderr to log files so output streams as the profiler runs.
+    with open(stdout_log, 'w', encoding='utf-8') as fout, \
+         open(stderr_log, 'w', encoding='utf-8') as ferr:
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        sys.stdout = _Tee(old_stdout, fout)
+        sys.stderr = _Tee(old_stderr, ferr)
+        try:
+            _run(args)
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
 
 if __name__ == '__main__':
     main()

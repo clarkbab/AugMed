@@ -116,7 +116,7 @@ def plot_slice(
         labels = labels.cpu().numpy()
     if ax is None:
         if show_hist:
-            _, axs = plt.subplots(1, 2, figsize=(12, 6))
+            _, axs = plt.subplots(1, 2, figsize=(12, 6), gridspec_kw={'width_ratios': [3, 1]})
         else:
             axs = [plt.gca()]
         show = True
@@ -138,6 +138,7 @@ def plot_slice(
     # Add histogram.
     if show_hist:
         axs[1].hist(data.flatten(), bins=50, color='gray')
+        axs[1].ticklabel_format(axis='y', style='scientific', scilimits=(0, 0))
 
     # Hide axis spines and ticks.
     for p in ['right', 'top', 'bottom', 'left']:
