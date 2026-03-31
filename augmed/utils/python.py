@@ -6,7 +6,7 @@ from typing import Any, Callable, Literal, Tuple, Union, get_args, get_origin
 from .misc import is_windows
 
 def delegates_to(*inner_fns: Callable) -> Callable:
-    if is_windows() or not python_version(gte='3.9'):
+    if is_windows() or not version(gte='3.9'):
         # Ast unparse is not available in Python < 3.9.
         return lambda f: f
 

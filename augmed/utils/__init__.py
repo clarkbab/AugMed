@@ -1,3 +1,4 @@
+# TODO: Only import things here that the user might want. We can use the full path in our codebase.
 from .args import *
 from .conversion import *
 from .geometry import *
