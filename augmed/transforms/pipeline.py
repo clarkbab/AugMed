@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import numpy as np
 import torch
@@ -417,7 +419,7 @@ class Pipeline(RandomTransform):
             type=self.__class__.__name__,
         )
 
-    def freeze(self) -> 'FrozenPipeline':
+    def freeze(self) -> FrozenPipeline:
         transforms = [t.freeze() if isinstance(t, RandomTransform) else t for t in self.__transforms]
         return FrozenPipeline(transforms, device=self._device, dim=self._dim)
 

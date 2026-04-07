@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import torch
 from typing import List, Literal, Tuple
@@ -450,7 +452,7 @@ class RandomElastic(RandomSpatialTransform):
             use_batching=self.__use_batching,
         )
 
-    def freeze(self) -> 'Elastic':
+    def freeze(self) -> Elastic:
         # Expand the range args.
         # We do this now because 'set_dim' could be called after RandomElastic.__init__.
         control_spacing_range = expand_range_arg(self.__control_spacing, dim=self._dim)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import torch
 import torch
@@ -59,7 +61,7 @@ class RandomRotate(RandomAffine):
             rotation_centre=self._rotation_centre,
         )
 
-    def freeze(self) -> 'Rotate':
+    def freeze(self) -> Rotate:
         # Expand the range args.
         # We do this now because 'set_dim' could be called after RandomRotate.__init__.
         rotation_range = expand_range_arg(self._rotation, dim=self._dim, negate_lower=True)

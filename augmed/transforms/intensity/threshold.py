@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import torch
 from typing import Tuple
 
@@ -34,7 +36,7 @@ class RandomThreshold(RandomIntensityTransform):
             min=self.__min_range,
         )
 
-    def freeze(self) -> 'Norm':
+    def freeze(self) -> Norm:
         should_apply = self._rng.random(1) < self._p
         if not should_apply:
             return Identity(dim=self._dim)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import torch
 
 from ...typing import SamplingGridTensor, Size, Spacing
@@ -87,7 +89,7 @@ class RandomResize(RandomGridTransform):
             spacing=self.__spacing,
         )
 
-    def freeze(self) -> 'Resize':
+    def freeze(self) -> Resize:
         # Expand the range args.
         # We do this now because 'set_dim' could be called after RandomResize.__init__.
         if self.__size is not None:

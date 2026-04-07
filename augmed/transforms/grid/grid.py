@@ -12,7 +12,8 @@ from ..transform import RandomTransform, Transform
 class GridTransform(Transform):
     def __init__(
         self,
-        **kwargs) -> None:
+        **kwargs,
+        ) -> None:
         super().__init__(**kwargs)
 
     def transform_grid(

@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """
-Sort method definitions within classes alphabetically.
+Sort function and method definitions alphabetically.
 
 Rules
 -----
 - ``__init__`` always comes first.
-- Other methods are sorted alphabetically, ignoring leading/trailing
+- Methods/functions referenced in sibling decorator expressions come next,
+  sorted alphabetically (e.g. ``ensure_loaded`` used as ``@ensure_loaded``,
+  or ``to_numpy`` referenced in ``@delegates_to(to_numpy)``).
+- Other methods/functions are sorted alphabetically, ignoring leading/trailing
   underscores (e.g. ``_foo`` sorts as ``foo``, ``__bar__`` as ``bar``).
 - Consecutive same-name methods (e.g. ``@property`` getter/setter pairs)
   are kept together as a single sortable unit.
-- Only contiguous runs of method definitions are sorted; class-level
+- Only contiguous runs of function/method definitions are sorted;
   assignments, inner classes, or other statements act as boundaries
   between sortable groups.
+- Both class methods and module-level functions are sorted.
 
 Usage
 -----
@@ -42,7 +46,7 @@ import argparse
 import ast
 from pathlib import Path
 import sys
-from typing import List, Tuple
+from typing import List, Set, Tuple
 
 SKIP_PATTERNS = {'__pycache__', '.egg-info', 'node_modules', '.git', '.venv', 'venv'}
 
@@ -51,18 +55,20 @@ SKIP_PATTERNS = {'__pycache__', '.egg-info', 'node_modules', '.git', '.venv', 'v
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _sort_key(name: str) -> Tuple[int, str]:
-    """``__init__`` first, then alphabetical ignoring underscores."""
-    if name == '__init__':
-        return (0, '')
-    return (1, name.strip('_').lower())
-
-
 def _method_start(node: ast.FunctionDef) -> int:
     """1-based line of the first decorator or ``def`` keyword."""
     if node.decorator_list:
         return min(d.lineno for d in node.decorator_list)
     return node.lineno
+
+
+def _sort_key(name: str, decorator_names: Set[str] = frozenset()) -> Tuple[int, str]:
+    """``__init__`` first, decorator methods second, then alphabetical ignoring underscores."""
+    if name == '__init__':
+        return (0, '')
+    if name in decorator_names:
+        return (1, name.strip('_').lower())
+    return (2, name.strip('_').lower())
 
 
 # ---------------------------------------------------------------------------
@@ -71,22 +77,64 @@ def _method_start(node: ast.FunctionDef) -> int:
 
 class _MethodUnit:
     """Group of consecutive same-name methods treated as one sortable block."""
-    __slots__ = ('name', 'nodes', 'start_line', 'end_line')
+    __slots__ = ('name', 'nodes', 'start_line', 'end_line', '_decorator_names')
 
-    def __init__(self, name: str, nodes: list) -> None:
+    def __init__(self, name: str, nodes: list, decorator_names: Set[str] = frozenset()) -> None:
         self.name = name
         self.nodes = nodes
         self.start_line = _method_start(nodes[0])
         self.end_line = nodes[-1].end_lineno
+        self._decorator_names = decorator_names
 
     @property
     def sort_key(self) -> Tuple[int, str]:
-        return _sort_key(self.name)
+        return _sort_key(self.name, self._decorator_names)
 
 
 # ---------------------------------------------------------------------------
 # Grouping helpers
 # ---------------------------------------------------------------------------
+
+def _build_units(
+    group: List[Tuple[int, ast.FunctionDef]],
+    decorator_names: Set[str] = frozenset(),
+) -> List[_MethodUnit]:
+    """Merge consecutive same-name methods into sortable units."""
+    units: List[_MethodUnit] = []
+    for _idx, node in group:
+        if units and units[-1].name == node.name:
+            # Extend existing unit (e.g. property setter following getter).
+            units[-1].nodes.append(node)
+            units[-1].end_line = node.end_lineno
+        else:
+            units.append(_MethodUnit(node.name, [node], decorator_names))
+    return units
+
+
+def _collect_decorator_deps(body: list) -> Set[str]:
+    """Return names of sibling functions/methods referenced in decorator expressions.
+
+    This catches both direct usage (``@ensure_loaded``) and indirect
+    references (``@delegates_to(to_numpy)``) — any sibling name that
+    appears anywhere in a decorator AST subtree.
+    """
+    # Collect all names defined as functions in this body.
+    defined = {
+        item.name
+        for item in body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    # Walk every decorator AST subtree looking for Name references to siblings.
+    deps: Set[str] = set()
+    for item in body:
+        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for dec in item.decorator_list:
+            for node in ast.walk(dec):
+                if isinstance(node, ast.Name) and node.id in defined and node.id != item.name:
+                    deps.add(node.id)
+    return deps
+
 
 def _group_consecutive(
     methods: List[Tuple[int, ast.FunctionDef]],
@@ -104,27 +152,12 @@ def _group_consecutive(
     return groups
 
 
-def _build_units(
-    group: List[Tuple[int, ast.FunctionDef]],
-) -> List[_MethodUnit]:
-    """Merge consecutive same-name methods into sortable units."""
-    units: List[_MethodUnit] = []
-    for _idx, node in group:
-        if units and units[-1].name == node.name:
-            # Extend existing unit (e.g. property setter following getter).
-            units[-1].nodes.append(node)
-            units[-1].end_line = node.end_lineno
-        else:
-            units.append(_MethodUnit(node.name, [node]))
-    return units
-
-
 # ---------------------------------------------------------------------------
 # Core detection
 # ---------------------------------------------------------------------------
 
 def _find_unsorted_groups(source: str) -> List[List[_MethodUnit]]:
-    """Return groups of method units that are not alphabetically sorted."""
+    """Return groups of function/method units that are not alphabetically sorted."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
@@ -132,30 +165,41 @@ def _find_unsorted_groups(source: str) -> List[List[_MethodUnit]]:
 
     results: List[List[_MethodUnit]] = []
 
+    # Module-level functions.
+    _find_unsorted_in_body(tree.body, results)
+
+    # Class methods.
     for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
-            continue
-
-        # Collect FunctionDef / AsyncFunctionDef children with body indices.
-        methods = [
-            (i, item)
-            for i, item in enumerate(node.body)
-            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-        ]
-        if len(methods) < 2:
-            continue
-
-        for group in _group_consecutive(methods):
-            units = _build_units(group)
-            if len(units) < 2:
-                continue
-            keys = [u.sort_key for u in units]
-            if keys != sorted(keys):
-                results.append(units)
+        if isinstance(node, ast.ClassDef):
+            _find_unsorted_in_body(node.body, results)
 
     # Process bottom-up so earlier line numbers stay valid.
     results.sort(key=lambda g: g[0].start_line, reverse=True)
     return results
+
+
+def _find_unsorted_in_body(
+    body: list,
+    results: List[List[_MethodUnit]],
+) -> None:
+    """Append unsorted groups of functions/methods found in *body* to *results*."""
+    methods = [
+        (i, item)
+        for i, item in enumerate(body)
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    if len(methods) < 2:
+        return
+
+    decorator_names = _collect_decorator_deps(body)
+
+    for group in _group_consecutive(methods):
+        units = _build_units(group, decorator_names)
+        if len(units) < 2:
+            continue
+        keys = [u.sort_key for u in units]
+        if keys != sorted(keys):
+            results.append(units)
 
 
 # ---------------------------------------------------------------------------

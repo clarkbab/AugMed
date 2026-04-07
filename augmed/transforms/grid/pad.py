@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import torch
 from typing import List, Literal, Tuple
@@ -215,7 +217,7 @@ class RandomPad(RandomGridTransform):
             symmetric=self.__symmetric,
         )
 
-    def freeze(self) -> 'Pad':
+    def freeze(self) -> Pad:
         # Expand the range args.
         # We do this now because 'set_dim' could be called after RandomPad.__init__.
         symmetric = to_tensor(self.__symmetric, broadcast=self._dim)

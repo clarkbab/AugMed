@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import torch
 import torch
@@ -59,7 +61,7 @@ class RandomScale(RandomAffine):
             scaling_centre=self._scaling_centre,
         )
 
-    def freeze(self) -> 'Scale':
+    def freeze(self) -> Scale:
         # Expand the range args.
         # We do this now because 'set_dim' could be called after RandomScale.__init__.
         scaling_range = expand_range_arg(self._scaling, dim=self._dim, negate_lower=False)

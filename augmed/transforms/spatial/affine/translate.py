@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import torch
 import torch
@@ -51,7 +53,7 @@ class RandomTranslate(RandomAffine):
             translation=self._translation,
         )
 
-    def freeze(self) -> 'Translate':
+    def freeze(self) -> Translate:
         # Expand the range args.
         # We do this now because 'set_dim' could be called after RandomTranslate.__init__.
         translation_range = expand_range_arg(self._translation, dim=self._dim, negate_lower=True)

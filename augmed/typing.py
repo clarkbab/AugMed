@@ -42,8 +42,10 @@ ChannelLabelImage3DTensor = Bool[torch.Tensor, "C X Y Z"]
 SpatialDim = Literal[2, 3]
 FilePath = str
 Image2D = Float[np.ndarray | torch.Tensor, "X Y"]
+Image2DArray = Float[np.ndarray, "X Y"]
 Image2DTensor = Float[torch.Tensor, "X Y"]
 Image3D = Float[np.ndarray | torch.Tensor, "X Y Z"]
+Image3DArray = Float[np.ndarray, "X Y Z"]
 Image3DTensor = Float[torch.Tensor, "X Y Z"]
 Indices2D = Int[np.ndarray | torch.Tensor, "N 2"]
 Indices2DTensor = Int[torch.Tensor, "N 2"]
@@ -84,6 +86,7 @@ Spacing3D = Tuple[float, float, float] | Float[np.ndarray | torch.Tensor, "3"]
 Spacing3DTensor = Float[torch.Tensor, "3"]
 # Had to use Literal['TransformParams'] for recursive type definition.
 TransformParams = Dict[int | str, int | str | float | np.ndarray | torch.Tensor | Literal['TransformParams']]
+View = Literal[0, 1, 2]
 
 # Second-order types (composed of first-order types).
 AffineMatrix = AffineMatrix2D | AffineMatrix3D

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import torch
 from typing import Tuple
 
@@ -59,7 +61,7 @@ class RandomMinMax(RandomIntensityTransform):
             min=self.__min_range,
         )
 
-    def freeze(self) -> 'MinMax':
+    def freeze(self) -> MinMax:
         should_apply = self._rng.random(1) < self._p
         if not should_apply:
             return Identity(dim=self._dim)

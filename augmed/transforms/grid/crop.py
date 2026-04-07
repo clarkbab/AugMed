@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import torch
 from typing import List, Literal, Tuple
@@ -223,7 +225,7 @@ class RandomCrop(RandomGridTransform):
             symmetric=self.__symmetric,
         )
 
-    def freeze(self) -> 'Crop':
+    def freeze(self) -> Crop:
         # Expand the range args.
         # We do this now because 'set_dim' could be called after RandomCrop.__init__.
         symmetric = to_tensor(self.__symmetric, broadcast=self._dim)

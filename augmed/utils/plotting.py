@@ -3,9 +3,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import torch
-from typing import Literal
+from typing import List, Literal
 
-from ..typing import AffineMatrix3D, AffineMatrix3DArray, BatchLabelImage3DArray, ChannelLabelImage2D, ChannelLabelImage3D, Image2D, Image3D, Number, Orientation, Points, Points3D, Points3DArray, Size3DArray
+from ..typing import AffineMatrix3D, AffineMatrix3DArray, BatchLabelImage2D, BatchLabelImage3D, BatchLabelImage3DArray, Image, Image2D, Image2DArray, Image3D, Image3DArray, LabelImage3D, Number, Orientation, Point3D, Points, Points3D, Points3DArray, Size3DArray, View
+from .args import arg_to_list
 from .assertions import assert_orientation
 from .conversion import to_numpy
 from .geometry import com, foreground_fov_centre, fov, to_image_coords
@@ -15,8 +16,8 @@ from .matrix import affine_origin, affine_spacing
 VIEWS = ['Sagittal', 'Coronal', 'Axial']
 
 def _get_view_aspect(
-    view: int,
-    affine: np.ndarray | None,
+    view: View,
+    affine: AffineMatrix3DArray | None,
     ) -> float | None:
     if affine is None:
         return None
@@ -26,7 +27,7 @@ def _get_view_aspect(
     return aspect
 
 def _get_view_origin(
-    view: int,
+    view: View,
     orientation: Orientation = 'LPS',
     ) -> tuple[Literal['lower', 'upper'], Literal['lower', 'upper']]:
     assert_orientation(orientation)
@@ -43,23 +44,23 @@ def _get_view_origin(
     return (origin_x, origin_y)
 
 def _get_view_slice(
-    view: int,
-    data: np.ndarray,
+    view: View,
+    data: Image3DArray,
     idx: int,
-    ) -> np.ndarray:
+    ) -> Image2DArray:
     slicing: list[int | slice] = [slice(None)] * 3
     slicing[view] = idx
     return data[tuple(slicing)]
 
 def _get_view_xy(
-    view: int,
+    view: View,
     values: tuple | np.ndarray,
     ) -> tuple:
     axes = [i for i in range(3) if i != view]
     return values[axes[0]], values[axes[1]]
 
 def plot_hist(
-    data: np.ndarray | torch.Tensor,
+    data: Image,
     ax: mpl.axes.Axes | None = None,
     bins: int = 50,
     log_scale: bool = False,
@@ -100,7 +101,7 @@ def plot_slice(
     alpha: float = 0.3,
     ax: mpl.axes.Axes | None = None,
     cmap: str = 'gray',
-    labels: ChannelLabelImage2D | None = None,
+    labels: BatchLabelImage2D | None = None,
     show_hist: bool = False,
     title: str | None = None,
     vmin: float | None = None,
@@ -169,8 +170,9 @@ def plot_volume(
     dose_cmap: str = 'turbo',
     dose_cmap_trunc: float = 0.15,
     figsize: tuple[float, float] = (16, 6),
-    idx: int | float | str | None = None,
-    labels: ChannelLabelImage3D | None = None,
+    idx: int | float | str | Point3D | None = None,
+    labels: LabelImage3D | BatchLabelImage3D | None = None,
+    label_names: str | List[str] | None = None,
     centre_method: Literal['com', 'fov'] = 'com',
     orientation: Orientation = 'LPS',
     label_alpha: float = 0.3,
@@ -189,6 +191,11 @@ def plot_volume(
     dose = to_numpy(dose)
     labels = to_numpy(labels)
     points = to_numpy(points)
+
+    # Normalise labels to batch form (B, X, Y, Z).
+    if labels is not None and labels.ndim == 3:
+        labels = labels[np.newaxis]
+
     # Check for empty points array - could be filtered by the transform.
     if points is not None:
         if points.shape[0] == 0:
@@ -208,7 +215,7 @@ def plot_volume(
     axs = axs[0]
 
     for col_ax, v in zip(axs, views):
-        resolved_idx = _get_view_idx(v, data.shape, affine=affine, centre_method=centre_method, idx=idx, labels=labels, points=points)
+        resolved_idx = _get_view_idx(v, data.shape, affine=affine, centre_method=centre_method, idx=idx, labels=labels, label_names=label_names, points=points)
         image = _get_view_slice(v, data, resolved_idx)
         aspect = _get_view_aspect(v, affine)
         origin_x, origin_y = _get_view_origin(v, orientation=orientation)
@@ -234,11 +241,17 @@ def plot_volume(
 
         # Label overlays.
         if labels is not None:
+            label_names_list = arg_to_list(label_names, str) if label_names is not None else None
             for j, lab in enumerate(labels):
                 label_slice = _get_view_slice(v, lab, resolved_idx)
                 cmap_label = mpl.colors.ListedColormap(((1, 1, 1, 0), palette[j]))
                 col_ax.imshow(label_slice.T, alpha=label_alpha, aspect=aspect, cmap=cmap_label, origin=origin_y)
                 col_ax.contour(label_slice.T, colors=[palette[j]], levels=[0.5], linestyles='solid')
+
+            # Add legend on first view only.
+            if label_names_list is not None and v == views[0]:
+                handles = [mpl.patches.Patch(facecolor=palette[j], label=label_names_list[j]) for j in range(len(labels)) if j < len(label_names_list)]
+                col_ax.legend(handles=handles, loc='upper right', fontsize='small', framealpha=0.7)
 
         # Point overlays.
         if points is not None:
@@ -297,11 +310,12 @@ def plot_volume(
     plt.show()
 
 def _get_view_idx(
-    view: int,
+    view: View,
     size: Size3DArray,
     affine: AffineMatrix3DArray | None = None,
-    idx: int | float | str | None = None,
+    idx: int | float | str | Point3D | None = None,
     labels: BatchLabelImage3DArray | None = None,
+    label_names: List[str] | None = None,
     centre_method: Literal['com', 'fov'] = 'com',
     points: Points3DArray | None = None,
     ) -> int:
@@ -309,7 +323,16 @@ def _get_view_idx(
     if idx is None:
         idx = 'p:0.5'
 
-    # World coords.
+    # Point3D - a 3D world coordinate (tuple, list, np.ndarray, or torch.Tensor).
+    if isinstance(idx, (tuple, list, np.ndarray, torch.Tensor)) and not isinstance(idx, bool):
+        idx = np.asarray(idx).flatten()
+        if len(idx) != 3:
+            raise ValueError(f"Expected a 3-element point for idx but got {len(idx)} elements.")
+        if affine is not None:
+            idx = to_image_coords(idx, affine)
+        return int(np.clip(np.round(idx[view]), 0, size[view] - 1))
+
+    # Scalar world coords.
     if isinstance(idx, (int, float)) and not isinstance(idx, bool):
         if affine is not None:
             idx = to_image_coords(idx, affine)
@@ -317,7 +340,7 @@ def _get_view_idx(
 
     # String prefixes.
     if not isinstance(idx, str):
-        raise ValueError(f"Invalid idx: {idx}. Expected int, float, str, or None.")
+        raise ValueError(f"Invalid idx: {idx}. Expected int, float, str, Point3D, or None.")
 
     source, value = idx.split(':')
 
@@ -330,14 +353,25 @@ def _get_view_idx(
     if source == 'i':
         return int(np.clip(int(value), 0, size[view] - 1))
 
-    # Label channels.
-    if source == 'labels':
+    # Label channels - by index (e.g. "labels:0") or name (e.g. "labels:Brainstem").
+    if source in ('label', 'labels'):
         if labels is None:
             raise ValueError(f"idx='{idx}' but no labels were provided.")
+
+        # Resolve label index from name or integer string.
+        if value.isdigit():
+            label_idx = int(value)
+        else:
+            if label_names is None:
+                raise ValueError(f"idx='{idx}' uses a label name but no 'label_names' were provided.")
+            if value not in label_names:
+                raise ValueError(f"Label name '{value}' not found in label_names: {label_names}.")
+            label_idx = label_names.index(value)
+
         if centre_method == 'com':
-            centre = com(labels[int(value)], affine=affine)
+            centre = com(labels[label_idx], affine=affine)
         elif centre_method == 'fov':
-            centre = foreground_fov_centre(labels[int(value)], affine=affine)
+            centre = foreground_fov_centre(labels[label_idx], affine=affine)
         else:
             raise ValueError(f"Unknown centre_method '{centre_method}'. Expected 'com' or 'fov'.")
 

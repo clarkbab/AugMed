@@ -1,9 +1,39 @@
-# import ast
+import ast
 import inspect
 import sys
-from typing import Any, Callable, Literal, Tuple, Union, get_args, get_origin
+import textwrap
+from typing import Any, Callable, List, Literal, Tuple, Union, get_args, get_origin
 
 from .misc import is_windows
+
+class CallVisitor(ast.NodeVisitor):
+    def __init__(
+        self,
+        inner_fn: Callable):
+        self.__inner_fn = inner_fn
+        self.__args = []
+        self.__kwargs = []
+    
+    @property
+    def args(self) -> List[str]:
+        return self.__args
+        
+    @property
+    def kwargs(self) -> List[str]:
+        return self.__kwargs
+
+    def visit_Call(self, node):
+        if isinstance(node.func, ast.Name) and node.func.id == self.__inner_fn.__name__:
+            for a in node.args:
+                if isinstance(a, ast.Starred):
+                    self.__args.append('args')
+                else:
+                    self.__args.append(ast.unparse(a))
+            for k in node.keywords:
+                if k.arg is None:
+                    self.__kwargs.append('kwargs')
+                else:
+                    self.__kwargs.append(k.arg)
 
 def delegates_to(*inner_fns: Callable) -> Callable:
     if is_windows() or not version(gte='3.9'):
@@ -52,6 +82,16 @@ def delegates_to(*inner_fns: Callable) -> Callable:
         return outer_fn
 
     return change_outer_fn_sig
+
+def get_inner_args(
+    outer_fn: Callable,
+    inner_fn: Callable,
+    ) -> Tuple[List[str], List[str]]:
+    source = textwrap.dedent(inspect.getsource(outer_fn))
+    tree = ast.parse(source)
+    visitor = CallVisitor(inner_fn)
+    visitor.visit(tree)
+    return visitor.args, visitor.kwargs
 
 def is_generic(t: Any) -> bool:
     return get_origin(t) is not None

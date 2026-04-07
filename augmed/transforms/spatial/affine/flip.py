@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import torch
 from typing import Literal, Tuple
@@ -60,7 +62,7 @@ class RandomFlip(RandomAffine):
             p_flip=self.__p_flip,
         )
 
-    def freeze(self) -> 'Flip':
+    def freeze(self) -> Flip:
         # Expand the args.
         # We do this now because 'set_dim' could be called after RandomFlip.__init__.
         p_flip = arg_to_list(self.__p_flip, (int, float), broadcast=self._dim)

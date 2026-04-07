@@ -36,6 +36,7 @@ Exit codes
 
 import argparse
 import ast
+import builtins
 from pathlib import Path
 import re
 import sys
@@ -138,6 +139,237 @@ def _public_names_from_file(module_path: Path) -> Set[str]:
                     names.add(n)
 
     return names
+
+
+def _defined_names_in_file(module_path: Path) -> Set[str]:
+    """Return names that are *directly defined* in *module_path*.
+
+    Only considers ``class``, ``def``, and top-level assignments — NOT
+    re-exports via ``from X import Y``.
+    """
+    try:
+        source = module_path.read_text(encoding='utf-8')
+        tree = ast.parse(source)
+    except (SyntaxError, UnicodeDecodeError, PermissionError):
+        return set()
+
+    names: Set[str] = set()
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if not node.name.startswith('_'):
+                names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and not target.id.startswith('_'):
+                    names.add(target.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if not node.target.id.startswith('_'):
+                names.add(node.target.id)
+    return names
+
+
+def _class_names_in_file(module_path: Path) -> Set[str]:
+    """Return names of classes directly defined in *module_path*."""
+    try:
+        source = module_path.read_text(encoding='utf-8')
+        tree = ast.parse(source)
+    except (SyntaxError, UnicodeDecodeError, PermissionError):
+        return set()
+
+    return {
+        node.name
+        for node in ast.iter_child_nodes(tree)
+        if isinstance(node, ast.ClassDef) and not node.name.startswith('_')
+    }
+
+
+def _collect_relative_imports_from_file(module_path: Path) -> Set[Path]:
+    """Return the set of resolved file paths that *module_path* imports from
+    via relative imports (excluding ``TYPE_CHECKING`` blocks).
+
+    When a relative import resolves to an ``__init__.py`` that is an
+    *ancestor package* of *module_path* (i.e. the importing file lives
+    inside that package), the ``__init__.py`` is excluded because Python
+    guarantees it is already loaded.  Non-ancestor ``__init__.py`` files
+    (e.g. sibling or child packages) are included normally.
+    """
+    try:
+        source = module_path.read_text(encoding='utf-8')
+        tree = ast.parse(source)
+    except (SyntaxError, UnicodeDecodeError, PermissionError):
+        return set()
+
+    # Identify line numbers inside ``if TYPE_CHECKING:`` blocks so we can
+    # skip them — those imports don't execute at runtime and therefore
+    # cannot contribute to a circular-import chain.
+    tc_lines: Set[int] = set()
+    for node in ast.iter_child_nodes(tree):
+        if (isinstance(node, ast.If)
+                and isinstance(node.test, ast.Name)
+                and node.test.id == 'TYPE_CHECKING'):
+            for child in node.body:
+                for ln in range(child.lineno, (child.end_lineno or child.lineno) + 1):
+                    tc_lines.add(ln)
+
+    # Compute the set of ancestor __init__.py files for module_path.
+    own_ancestors = _ancestor_init_files(module_path)
+
+    paths: Set[Path] = set()
+    for node in ast.iter_child_nodes(tree):
+        # Skip ``if TYPE_CHECKING:`` blocks (type-only, not runtime).
+        if isinstance(node, ast.If):
+            continue
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.lineno in tc_lines:
+            continue
+        if (node.level or 0) == 0:
+            continue  # absolute import
+        mod_str = '.' * node.level + (node.module or '')
+        resolved = _resolve_module_path(mod_str, module_path)
+        if resolved is not None:
+            real = resolved.resolve()
+            # Skip ancestor __init__.py — already loaded when module_path
+            # is being imported.
+            if real in own_ancestors:
+                continue
+            paths.add(real)
+    return paths
+
+
+def _ancestor_init_files(file_path: Path) -> Set[Path]:
+    """Return the set of ``__init__.py`` files in ancestor directories of
+    *file_path* (i.e. the package hierarchy above the file).
+
+    These are guaranteed to be already loaded by the time *file_path* is
+    imported, so they don't contribute to circular-import chains."""
+    result: Set[Path] = set()
+    d = file_path.resolve().parent
+    while True:
+        init = d / '__init__.py'
+        if init.exists():
+            result.add(init.resolve())
+            d = d.parent
+        else:
+            break
+    return result
+
+
+def _would_cause_circular_import(file_path: Path, target_module: str) -> bool:
+    """Return True if importing *target_module* (a relative import string
+    like ``....typing``) from *file_path* would create a circular import.
+
+    This performs a breadth-first walk of the runtime relative-import graph
+    starting from the resolved *target_module*, checking whether any
+    transitive import leads back to *file_path*.
+    """
+    resolved = _resolve_module_path(target_module, file_path)
+    if resolved is None:
+        return False  # can't resolve — assume safe
+
+    target_resolved = resolved.resolve()
+    origin = file_path.resolve()
+
+    if target_resolved == origin:
+        return True  # direct self-import
+
+    # BFS with a depth limit to avoid very expensive traversals.
+    visited: Set[Path] = {target_resolved}
+    frontier: Set[Path] = {target_resolved}
+    max_depth = 10
+    for _ in range(max_depth):
+        next_frontier: Set[Path] = set()
+        for mod_path in frontier:
+            for dep in _collect_relative_imports_from_file(mod_path):
+                if dep == origin:
+                    return True
+                if dep not in visited:
+                    visited.add(dep)
+                    next_frontier.add(dep)
+        if not next_frontier:
+            break
+        frontier = next_frontier
+
+    return False
+
+
+def _find_defining_module(
+    name: str,
+    file_path: Path,
+) -> Optional[Tuple[int, str]]:
+    """Search the project package for the file that *defines* *name*.
+
+    Returns ``(level, module_dotted)`` suitable for building a relative
+    ``from`` import, or ``None`` if not found.
+
+    The search starts from the current file's package and walks up to the
+    project root (the highest directory that still has ``__init__.py``).
+    """
+    # Find the project root (top-level package).
+    pkg_root = file_path.parent
+    while (pkg_root.parent / '__init__.py').exists():
+        pkg_root = pkg_root.parent
+
+    # Recursively scan all .py files under the package root.
+    candidates: List[Tuple[Path, int]] = []
+    for py_file in sorted(pkg_root.rglob('*.py')):
+        if py_file == file_path:
+            continue
+        if any(skip in py_file.parts for skip in SKIP_PATTERNS):
+            continue
+        # Skip __init__.py files — names there are typically re-exports.
+        if py_file.name == '__init__.py':
+            continue
+        if name in _defined_names_in_file(py_file):
+            candidates.append(py_file)
+
+    if not candidates:
+        return None
+
+    # Prefer the shortest module path (closest definition).
+    best = min(candidates, key=lambda p: len(p.parts))
+
+    # Compute the relative import from file_path to best.
+    return _relative_import_for(file_path, best)
+
+
+def _relative_import_for(
+    from_file: Path,
+    to_file: Path,
+) -> Tuple[int, str]:
+    """Compute ``(level, module_dotted)`` for a relative import.
+
+    Given that we are in *from_file* and want to import from *to_file*,
+    return the dot-level and module portion (e.g. ``(3, 'patient')`` for
+    ``from ...patient import ...``).
+    """
+    from_parts = list(from_file.parent.parts)
+    # If to_file is an __init__.py, the module is the directory itself.
+    if to_file.name == '__init__.py':
+        to_parts = list(to_file.parent.parts)
+        to_module_parts: List[str] = []
+    else:
+        to_parts = list(to_file.parent.parts)
+        to_module_parts = [to_file.stem]
+
+    # Find common prefix length.
+    common = 0
+    for a, b in zip(from_parts, to_parts):
+        if a == b:
+            common += 1
+        else:
+            break
+
+    # Level = how many directories we must go UP from from_file's package.
+    # In Python's relative import system, 1 dot = current package (no
+    # upward traversal), 2 dots = parent, etc.
+    level = len(from_parts) - common + 1
+    # Module = the remaining path components of to_file's directory + stem.
+    remaining_dirs = to_parts[common:]
+    module_parts = remaining_dirs + to_module_parts
+    module_dotted = '.'.join(module_parts)
+
+    return (level, module_dotted)
 
 
 def _bare_imports_from_file(module_path: Path) -> List[Tuple[str, Optional[str]]]:
@@ -278,6 +510,373 @@ def _collect_all_names_in_source(source: str) -> Set[str]:
     return names
 
 
+def _collect_ast_name_references(source: str) -> Set[str]:
+    """Return only names that appear as real ``ast.Name`` or ``ast.Attribute``
+    root references in *source* — excludes tokens extracted from string literals."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+
+    names: Set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            root = node
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name):
+                names.add(root.id)
+    return names
+
+
+def _names_from_target(target: ast.AST) -> Set[str]:
+    """Recursively extract all ``ast.Name`` ids from an assignment target
+    (handles nested tuples/lists like ``for i, (m, u) in ...``)."""
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        result: Set[str] = set()
+        for elt in target.elts:
+            result |= _names_from_target(elt)
+        return result
+    if isinstance(target, ast.Starred):
+        return _names_from_target(target.value)
+    return set()
+
+
+def _collect_defined_names(source: str) -> Set[str]:
+    """Return names defined locally in *source* (functions, classes, assignments,
+    params, exception handlers, context managers, and body-level imports such as
+    those inside ``if TYPE_CHECKING`` blocks)."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+
+    names: Set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+            # Add parameter names.
+            for arg in node.args.args + node.args.posonlyargs + node.args.kwonlyargs:
+                names.add(arg.arg)
+            if node.args.vararg:
+                names.add(node.args.vararg.arg)
+            if node.args.kwarg:
+                names.add(node.args.kwarg.arg)
+        elif isinstance(node, ast.Lambda):
+            for arg in node.args.args + node.args.posonlyargs + node.args.kwonlyargs:
+                names.add(arg.arg)
+            if node.args.vararg:
+                names.add(node.args.vararg.arg)
+            if node.args.kwarg:
+                names.add(node.args.kwarg.arg)
+        elif isinstance(node, ast.ClassDef):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                names |= _names_from_target(target)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            names |= _names_from_target(node.target)
+        elif isinstance(node, ast.comprehension):
+            names |= _names_from_target(node.target)
+        elif isinstance(node, ast.NamedExpr):
+            if isinstance(node.target, ast.Name):
+                names.add(node.target.id)
+        # ``except SomeError as e:``
+        elif isinstance(node, ast.ExceptHandler):
+            if node.name:
+                names.add(node.name)
+        # ``with open(f) as fh:``
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    names |= _names_from_target(item.optional_vars)
+        # Body-level imports (e.g. inside ``if TYPE_CHECKING:`` blocks).
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split('.')[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                names.add(alias.asname or alias.name)
+
+    # Common dunder attributes that are always available at module level.
+    names.update({'__file__', '__name__', '__doc__', '__package__',
+                  '__spec__', '__loader__', '__path__'})
+    return names
+
+
+_BUILTIN_NAMES: Set[str] = set(dir(builtins))
+
+
+def _has_future_annotations(source: str) -> bool:
+    """Return True if the source contains ``from __future__ import annotations``."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    for node in ast.iter_child_nodes(tree):
+        if (isinstance(node, ast.ImportFrom)
+                and node.module == '__future__'
+                and any(alias.name == 'annotations' for alias in node.names)):
+            return True
+    return False
+
+
+def _collect_annotation_only_names(source: str) -> Set[str]:
+    """Return names that appear ONLY in type-annotation contexts.
+
+    A name is "annotation-only" when it is referenced in function parameter
+    annotations, return-type annotations, or variable annotations but
+    **never** in runtime expressions (calls, assignments, attribute access,
+    etc.).
+
+    This function works on the *body* source (import block already stripped).
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+
+    annotation_names: Set[str] = set()
+    runtime_names: Set[str] = set()
+
+    def _extract_names(node: ast.AST) -> Set[str]:
+        """Extract all Name references from an AST subtree."""
+        names: Set[str] = set()
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name):
+                names.add(child.id)
+            elif isinstance(child, ast.Attribute):
+                root = child
+                while isinstance(root, ast.Attribute):
+                    root = root.value
+                if isinstance(root, ast.Name):
+                    names.add(root.id)
+            elif isinstance(child, ast.Constant) and isinstance(child.value, str):
+                for token in re.findall(r'[A-Za-z_]\w*', child.value):
+                    names.add(token)
+        return names
+
+    def _walk_runtime(node: ast.AST) -> None:
+        """Walk a node that is in a runtime context, collecting names."""
+        for child in ast.walk(node):
+            if isinstance(child, ast.Name):
+                runtime_names.add(child.id)
+            elif isinstance(child, ast.Attribute):
+                root = child
+                while isinstance(root, ast.Attribute):
+                    root = root.value
+                if isinstance(root, ast.Name):
+                    runtime_names.add(root.id)
+            elif isinstance(child, ast.Constant) and isinstance(child.value, str):
+                for token in re.findall(r'[A-Za-z_]\w*', child.value):
+                    runtime_names.add(token)
+
+    for node in ast.walk(tree):
+        # Function / method definitions: annotations are type-only, body is runtime.
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # Return annotation.
+            if node.returns:
+                annotation_names |= _extract_names(node.returns)
+            # Argument annotations.
+            for arg in (node.args.args + node.args.posonlyargs +
+                        node.args.kwonlyargs):
+                if arg.annotation:
+                    annotation_names |= _extract_names(arg.annotation)
+            if node.args.vararg and node.args.vararg.annotation:
+                annotation_names |= _extract_names(node.args.vararg.annotation)
+            if node.args.kwarg and node.args.kwarg.annotation:
+                annotation_names |= _extract_names(node.args.kwarg.annotation)
+            # Default values are runtime.
+            for default in node.args.defaults + node.args.kw_defaults:
+                if default:
+                    _walk_runtime(default)
+            # Decorators are runtime.
+            for decorator in node.decorator_list:
+                _walk_runtime(decorator)
+            # Body statements are handled by further walk iterations.
+
+        elif isinstance(node, ast.AnnAssign):
+            # ``x: SomeType = value`` — the annotation is type-only,
+            # the value (if any) is runtime.
+            if node.annotation:
+                annotation_names |= _extract_names(node.annotation)
+            if node.value:
+                _walk_runtime(node.value)
+
+        elif isinstance(node, ast.ClassDef):
+            # Base classes are RUNTIME (evaluated when the class is created).
+            for base in node.bases:
+                _walk_runtime(base)
+            for kw in node.keywords:
+                _walk_runtime(kw.value)
+            for decorator in node.decorator_list:
+                _walk_runtime(decorator)
+
+    # Now collect ALL names from the source as runtime, then subtract
+    # annotation positions. The simplest approach: collect runtime names
+    # from every context that is NOT an annotation.
+    # We already collected annotation_names above. Now we need all the
+    # runtime references. We do a second pass where we walk only
+    # non-annotation subtrees.
+    for node in ast.iter_child_nodes(tree):
+        # Skip import nodes.
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        # For function defs, walk body + decorators + defaults but NOT annotations.
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for decorator in node.decorator_list:
+                _walk_runtime(decorator)
+            for default in node.args.defaults + node.args.kw_defaults:
+                if default:
+                    _walk_runtime(default)
+            for child in node.body:
+                _walk_runtime(child)
+        elif isinstance(node, ast.ClassDef):
+            for base in node.bases:
+                _walk_runtime(base)
+            for kw in node.keywords:
+                _walk_runtime(kw.value)
+            for decorator in node.decorator_list:
+                _walk_runtime(decorator)
+            for child in node.body:
+                # Class body items — recurse to handle methods etc.
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for dec in child.decorator_list:
+                        _walk_runtime(dec)
+                    for default in child.args.defaults + child.args.kw_defaults:
+                        if default:
+                            _walk_runtime(default)
+                    for sub in child.body:
+                        _walk_runtime(sub)
+                elif isinstance(child, ast.AnnAssign):
+                    if child.value:
+                        _walk_runtime(child.value)
+                else:
+                    _walk_runtime(child)
+        elif isinstance(node, ast.AnnAssign):
+            if node.value:
+                _walk_runtime(node.value)
+        else:
+            _walk_runtime(node)
+
+    # Annotation-only = names that appear in annotations but NOT in runtime.
+    return annotation_names - runtime_names
+
+
+def _collect_string_annotation_names(source: str) -> Set[str]:
+    """Return class-like names that appear as *string* annotations.
+
+    These are annotations written as ``param: 'SomeClass'`` — typically
+    forward references used to avoid circular imports.  Only names whose
+    first character is upper-case are returned (class names).
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+
+    names: Set[str] = set()
+
+    def _scan_annotation(node: ast.AST) -> None:
+        """If *node* is a string constant, extract class-like tokens."""
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            for token in re.findall(r'[A-Za-z_]\w*', node.value):
+                if token[0].isupper():
+                    names.add(token)
+        # Handle ``'A' | 'B'`` (BinOp with | in 3.10+) etc.
+        elif isinstance(node, ast.BinOp):
+            _scan_annotation(node.left)
+            _scan_annotation(node.right)
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.returns:
+                _scan_annotation(node.returns)
+            for arg in (node.args.args + node.args.posonlyargs +
+                        node.args.kwonlyargs):
+                if arg.annotation:
+                    _scan_annotation(arg.annotation)
+            if node.args.vararg and node.args.vararg.annotation:
+                _scan_annotation(node.args.vararg.annotation)
+            if node.args.kwarg and node.args.kwarg.annotation:
+                _scan_annotation(node.args.kwarg.annotation)
+        elif isinstance(node, ast.AnnAssign) and node.annotation:
+            _scan_annotation(node.annotation)
+
+    return names
+
+
+def _unquote_annotations(source: str) -> str:
+    """Replace string-literal annotations with bare names.
+
+    After ``from __future__ import annotations`` is added, annotations are
+    no longer evaluated at runtime, so forward references written as
+    ``'SomeClass'`` can become ``SomeClass``.
+
+    Only single-quoted or double-quoted annotations that consist of a valid
+    Python expression are unquoted.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return source
+
+    # Collect (start_offset, end_offset, replacement) for each string
+    # annotation that should be unquoted.  Work on byte offsets in the
+    # source text.
+    lines = source.splitlines(keepends=True)
+    replacements: List[Tuple[int, int, str]] = []
+
+    def _line_col_to_offset(lineno: int, col: int) -> int:
+        return sum(len(lines[i]) for i in range(lineno - 1)) + col
+
+    def _maybe_unquote(node: ast.AST) -> None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            # Verify the string looks like a valid type expression.
+            try:
+                ast.parse(node.value, mode='eval')
+            except SyntaxError:
+                return
+            start = _line_col_to_offset(node.lineno, node.col_offset)
+            end = _line_col_to_offset(node.end_lineno, node.end_col_offset)
+            replacements.append((start, end, node.value))
+        elif isinstance(node, ast.BinOp):
+            _maybe_unquote(node.left)
+            _maybe_unquote(node.right)
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.returns:
+                _maybe_unquote(node.returns)
+            for arg in (node.args.args + node.args.posonlyargs +
+                        node.args.kwonlyargs):
+                if arg.annotation:
+                    _maybe_unquote(arg.annotation)
+            if node.args.vararg and node.args.vararg.annotation:
+                _maybe_unquote(node.args.vararg.annotation)
+            if node.args.kwarg and node.args.kwarg.annotation:
+                _maybe_unquote(node.args.kwarg.annotation)
+        elif isinstance(node, ast.AnnAssign) and node.annotation:
+            _maybe_unquote(node.annotation)
+
+    if not replacements:
+        return source
+
+    # Apply replacements in reverse order to preserve offsets.
+    replacements.sort(key=lambda r: r[0], reverse=True)
+    chars = list(source)
+    for start, end, replacement in replacements:
+        chars[start:end] = list(replacement)
+
+    return ''.join(chars)
+
+
 # ---------------------------------------------------------------------------
 # Parsing imports
 # ---------------------------------------------------------------------------
@@ -343,6 +942,14 @@ def _find_import_block(lines: List[str]) -> Tuple[int, int]:
             i += 1
             continue
 
+        # ``if TYPE_CHECKING:`` guards are part of the import block.
+        if stripped == 'if TYPE_CHECKING:':
+            if first_import is None:
+                first_import = i
+            last_import = i
+            i += 1
+            continue
+
         if _is_import_line(stripped):
             if first_import is None:
                 first_import = i
@@ -366,7 +973,8 @@ def _find_import_block(lines: List[str]) -> Tuple[int, int]:
 
 class _Import:
     """Parsed representation of a single import statement."""
-    __slots__ = ('is_from', 'module', 'level', 'names', 'alias', 'raw')
+    __slots__ = ('is_from', 'module', 'level', 'names', 'alias', 'raw',
+                 'type_checking')
 
     def __init__(
         self,
@@ -376,6 +984,7 @@ class _Import:
         names: List[Tuple[str, Optional[str]]],
         alias: Optional[str],
         raw: str,
+        type_checking: bool = False,
     ) -> None:
         self.is_from = is_from
         self.module = module        # e.g. "typing", "..utils.args", None
@@ -383,6 +992,7 @@ class _Import:
         self.names = names          # [(name, asname), ...]
         self.alias = alias          # for ``import X as Y``
         self.raw = raw
+        self.type_checking = type_checking  # True if inside ``if TYPE_CHECKING:``
 
     @property
     def full_module(self) -> str:
@@ -410,11 +1020,59 @@ def _parse_imports(source: str, start: int, end: int, lines: List[str]) -> List[
     except SyntaxError:
         return []
 
+    # Build a set of line numbers that are inside ``if TYPE_CHECKING:`` blocks.
+    tc_import_lines: Set[int] = set()
+    for node in ast.iter_child_nodes(tree):
+        if (isinstance(node, ast.If)
+                and isinstance(node.test, ast.Name)
+                and node.test.id == 'TYPE_CHECKING'
+                and node.lineno - 1 >= start
+                and node.lineno - 1 < end):
+            for child in node.body:
+                if isinstance(child, (ast.Import, ast.ImportFrom)):
+                    for ln in range(child.lineno, (child.end_lineno or child.lineno) + 1):
+                        tc_import_lines.add(ln)
+
     imports: List[_Import] = []
     for node in ast.iter_child_nodes(tree):
         if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            # Also handle ``if TYPE_CHECKING:`` nodes — parse their children.
+            if (isinstance(node, ast.If)
+                    and isinstance(node.test, ast.Name)
+                    and node.test.id == 'TYPE_CHECKING'):
+                for child in node.body:
+                    if not isinstance(child, (ast.Import, ast.ImportFrom)):
+                        continue
+                    if child.lineno - 1 < start or child.lineno - 1 >= end:
+                        continue
+                    if isinstance(child, ast.Import):
+                        for alias in child.names:
+                            imp = _Import(
+                                alias=alias.asname,
+                                is_from=False,
+                                level=0,
+                                module=alias.name,
+                                names=[(alias.name, alias.asname)],
+                                raw=_reconstruct_import(child, lines),
+                                type_checking=True,
+                            )
+                            imports.append(imp)
+                    else:
+                        imp = _Import(
+                            alias=None,
+                            is_from=True,
+                            level=child.level,
+                            module=child.module or '',
+                            names=[(a.name, a.asname) for a in child.names],
+                            raw=_reconstruct_import(child, lines),
+                            type_checking=True,
+                        )
+                        imports.append(imp)
             continue
         if node.lineno - 1 < start or node.lineno - 1 >= end:
+            continue
+        # Skip imports that are inside TYPE_CHECKING blocks — already handled.
+        if node.lineno in tc_import_lines:
             continue
 
         if isinstance(node, ast.Import):
@@ -565,6 +1223,7 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
                     module=imp.module,
                     names=[(n, None) for n in replacement],
                     raw=imp.raw,
+                    type_checking=imp.type_checking,
                 )
             else:
                 # Could not resolve — keep the star import as-is.
@@ -578,6 +1237,11 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
     else:
         cleaned: List[_Import] = []
         for imp in expanded:
+            # TYPE_CHECKING imports are only for annotations — always keep.
+            if imp.type_checking:
+                cleaned.append(imp)
+                continue
+
             if not imp.is_from:
                 # ``import X as Y`` — check if Y (or X) is used.
                 name = imp.alias or imp.names[0][0].split('.')[0]
@@ -605,6 +1269,7 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
                     module=imp.module,
                     names=kept,
                     raw=imp.raw,
+                    type_checking=imp.type_checking,
                 )
                 cleaned.append(imp)
 
@@ -646,6 +1311,7 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
                 module=imp.module,
                 names=kept,
                 raw=imp.raw,
+                type_checking=imp.type_checking,
             )
             deduped.append(imp)
     cleaned = deduped
@@ -665,7 +1331,12 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
                 for name, asname in imp.names:
                     already_imported.add(asname or name)
 
-        missing = used_names - already_imported
+        # Use only real AST name references (not tokens from string literals)
+        # and exclude locally-defined names and builtins to avoid adding
+        # spurious imports.
+        ast_refs = _collect_ast_name_references(body_source)
+        defined = _collect_defined_names(body_source)
+        missing = ast_refs - already_imported - _BUILTIN_NAMES - defined
         if missing:
             # Build a map: module -> set of available names.
             module_available: Dict[str, Set[str]] = {}
@@ -721,9 +1392,169 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
                         raw=imp.raw,
                     )
                     missing -= to_add
+
+            # Warn about remaining names that are genuine AST references
+            # but not found in any imported module.
+            if missing:
+                for name in sorted(missing):
+                    print(f'  Warning: {file_path}: used name {name!r} not found in any imported module')
+
     for imp in cleaned:
         if imp.is_from and not imp.is_star:
             imp.names = _sort_imported_names(imp.names)
+
+    # --- Phase 4b: Detect type-checking-only imports ---
+    # Annotation-only names from *relative* imports that would cause a
+    # circular import are moved into an ``if TYPE_CHECKING:`` block.
+    # We only guard imports whose target module transitively imports back
+    # into *file_path* (i.e. would create a real circular dependency).
+    # Imports from modules that don't form a cycle (e.g. type aliases in
+    # a ``typing`` module, or classes in unrelated modules) are left as
+    # normal runtime imports even if only used in annotations.
+    #
+    # When imports are moved to TYPE_CHECKING, ``from __future__ import
+    # annotations`` is also added (if absent) so that annotations become
+    # strings and don't trigger an import at runtime.
+    if not is_init:
+        annotation_only = _collect_annotation_only_names(body_source)
+        if annotation_only:
+            # Cache circular-import checks per module to avoid repeated BFS.
+            _circular_cache: Dict[str, bool] = {}
+            new_cleaned: List[_Import] = []
+            for imp in cleaned:
+                if imp.type_checking:
+                    # Already in TYPE_CHECKING — keep as-is.
+                    new_cleaned.append(imp)
+                    continue
+
+                # Only consider relative (project-internal) imports.
+                if not imp.is_relative:
+                    new_cleaned.append(imp)
+                    continue
+
+                # Check whether this import's module would cause a
+                # circular import.  Only guard it if so.
+                mod_key = imp.full_module
+                if mod_key not in _circular_cache:
+                    _circular_cache[mod_key] = _would_cause_circular_import(
+                        file_path, mod_key)
+                if not _circular_cache[mod_key]:
+                    new_cleaned.append(imp)
+                    continue
+
+                if not imp.is_from or imp.is_star:
+                    # Bare ``import X`` — check if the name is
+                    # used only in annotations.
+                    name = imp.alias or imp.names[0][0].split('.')[0]
+                    if name in annotation_only:
+                        imp = _Import(
+                            alias=imp.alias,
+                            is_from=imp.is_from,
+                            level=imp.level,
+                            module=imp.module,
+                            names=imp.names,
+                            raw=imp.raw,
+                            type_checking=True,
+                        )
+                    new_cleaned.append(imp)
+                    continue
+
+                # ``from .X import A, b, C`` — split into runtime vs
+                # type-only.
+                runtime_names: List[Tuple[str, Optional[str]]] = []
+                tc_names: List[Tuple[str, Optional[str]]] = []
+                for name, asname in imp.names:
+                    check = asname or name
+                    if check in annotation_only:
+                        tc_names.append((name, asname))
+                    else:
+                        runtime_names.append((name, asname))
+
+                if runtime_names:
+                    new_cleaned.append(_Import(
+                        alias=None,
+                        is_from=True,
+                        level=imp.level,
+                        module=imp.module,
+                        names=runtime_names,
+                        raw=imp.raw,
+                    ))
+                if tc_names:
+                    new_cleaned.append(_Import(
+                        alias=None,
+                        is_from=True,
+                        level=imp.level,
+                        module=imp.module,
+                        names=tc_names,
+                        raw=imp.raw,
+                        type_checking=True,
+                    ))
+            cleaned = new_cleaned
+
+    # --- Phase 4c: Import string-annotated class names under TYPE_CHECKING ---
+    # Detect class names that appear as string annotations (e.g.
+    # ``param: 'DicomPatient'``) but are not currently imported.  Resolve
+    # the *defining* module (where the class/function is actually defined,
+    # not just re-exported) and add an import.  If the import would cause
+    # a circular dependency, place it under ``if TYPE_CHECKING:``;
+    # otherwise add it as a normal runtime import.
+    if not is_init:
+        str_ann_names = _collect_string_annotation_names(body_source)
+        if str_ann_names:
+            already_imported: Set[str] = set()
+            for imp in cleaned:
+                if not imp.is_from or imp.is_star:
+                    name = imp.alias or imp.names[0][0].split('.')[0]
+                    already_imported.add(name)
+                else:
+                    for name, asname in imp.names:
+                        already_imported.add(asname or name)
+            unresolved = str_ann_names - already_imported - _BUILTIN_NAMES
+            if unresolved:
+                # Group names by their defining module.
+                # module_key (level, module_dotted) -> list of names
+                module_names: Dict[Tuple[int, str], List[str]] = {}
+                still_unresolved: Set[str] = set()
+                for uname in unresolved:
+                    result = _find_defining_module(uname, file_path)
+                    if result is not None:
+                        module_names.setdefault(result, []).append(uname)
+                    else:
+                        still_unresolved.add(uname)
+
+                for (level, mod_dotted), names_list in module_names.items():
+                    full_key = '.' * level + mod_dotted
+                    # Determine if this import would cause a circular dependency.
+                    is_circular = _would_cause_circular_import(file_path, full_key)
+                    # Check if there's already a matching import for this module.
+                    found = False
+                    for i, imp in enumerate(cleaned):
+                        if (imp.is_from
+                                and imp.type_checking == is_circular
+                                and imp.full_module == full_key):
+                            new_names = list(imp.names) + [(n, None) for n in names_list]
+                            cleaned[i] = _Import(
+                                alias=None,
+                                is_from=True,
+                                level=imp.level,
+                                module=imp.module,
+                                names=_sort_imported_names(new_names),
+                                raw=imp.raw,
+                                type_checking=is_circular,
+                            )
+                            found = True
+                            break
+                    if not found:
+                        cleaned.append(_Import(
+                            alias=None,
+                            is_from=True,
+                            level=level,
+                            module=mod_dotted,
+                            names=_sort_imported_names(
+                                [(n, None) for n in names_list]),
+                            raw='',
+                            type_checking=is_circular,
+                        ))
 
     # --- Phase 5: Separate into external vs relative, and sort ---
     external: List[_Import] = []
@@ -737,18 +1568,111 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
     external.sort(key=_external_sort_key)
     relative.sort(key=_relative_sort_key)
 
+    # If we have TYPE_CHECKING imports, ensure ``TYPE_CHECKING`` is imported
+    # from ``typing`` and ``from __future__ import annotations`` is present
+    # (so that annotations are not evaluated at runtime).
+    has_tc_imports = any(imp.type_checking for imp in cleaned)
+    if has_tc_imports:
+        # Ensure ``from __future__ import annotations``.
+        has_future_annot = any(
+            imp.is_from and imp.module == '__future__'
+            and any(n == 'annotations' for n, _ in imp.names)
+            for imp in future_imports
+        )
+        if not has_future_annot:
+            # Check if there's already a __future__ import to extend.
+            added = False
+            for i, imp in enumerate(future_imports):
+                if imp.is_from and imp.module == '__future__':
+                    new_names = list(imp.names) + [('annotations', None)]
+                    future_imports[i] = _Import(
+                        alias=None,
+                        is_from=True,
+                        level=0,
+                        module='__future__',
+                        names=_sort_imported_names(new_names),
+                        raw=imp.raw,
+                    )
+                    added = True
+                    break
+            if not added:
+                future_imports.append(_Import(
+                    alias=None,
+                    is_from=True,
+                    level=0,
+                    module='__future__',
+                    names=[('annotations', None)],
+                    raw='',
+                ))
+
+        # Ensure ``TYPE_CHECKING`` is imported from ``typing``.
+        # Check if TYPE_CHECKING is already imported.
+        tc_already_imported = False
+        for imp in external:
+            if imp.is_from and not imp.is_relative and imp.module == 'typing':
+                for name, _ in imp.names:
+                    if name == 'TYPE_CHECKING':
+                        tc_already_imported = True
+                        break
+        if not tc_already_imported:
+            # Add TYPE_CHECKING to the existing ``from typing import ...`` or
+            # create a new one.
+            added = False
+            for i, imp in enumerate(external):
+                if imp.is_from and not imp.is_relative and imp.module == 'typing':
+                    new_names = list(imp.names) + [('TYPE_CHECKING', None)]
+                    external[i] = _Import(
+                        alias=None,
+                        is_from=True,
+                        level=0,
+                        module='typing',
+                        names=_sort_imported_names(new_names),
+                        raw=imp.raw,
+                    )
+                    added = True
+                    break
+            if not added:
+                external.append(_Import(
+                    alias=None,
+                    is_from=True,
+                    level=0,
+                    module='typing',
+                    names=[('TYPE_CHECKING', None)],
+                    raw='',
+                ))
+                external.sort(key=_external_sort_key)
+
+    # Sort imports by their natural order — TYPE_CHECKING imports are
+    # interleaved at their correct dot-level position and wrapped in
+    # ``if TYPE_CHECKING:`` blocks during reconstruction.
+    external.sort(key=_external_sort_key)
+    relative.sort(key=_relative_sort_key)
+
     # --- Phase 6: Reconstruct the import block ---
     new_lines: List[str] = []
     for imp in future_imports:
         new_lines.append(_format_import(imp))
     if future_imports and (external or relative):
         new_lines.append('')
-    for imp in external:
-        new_lines.append(_format_import(imp))
+
+    def _emit_imports(imps: List[_Import]) -> None:
+        """Append formatted import lines, grouping consecutive
+        TYPE_CHECKING imports under a single ``if TYPE_CHECKING:`` block."""
+        in_tc_block = False
+        for imp in imps:
+            if imp.type_checking:
+                if not in_tc_block:
+                    new_lines.append('if TYPE_CHECKING:')
+                    in_tc_block = True
+                new_lines.append('    ' + _format_import(imp))
+            else:
+                in_tc_block = False
+                new_lines.append(_format_import(imp))
+
+    _emit_imports(external)
     if external and relative:
         new_lines.append('')
-    for imp in relative:
-        new_lines.append(_format_import(imp))
+    _emit_imports(relative)
 
     # Compare with original.
     original_import_text_lines = [l.rstrip('\n\r') for l in lines[start:end]]
@@ -770,6 +1694,13 @@ def sort_imports(source: str, file_path: Path) -> Tuple[str, int]:
     suffix = ''.join(lines[end:])
 
     new_source = prefix + new_block + suffix
+
+    # If ``from __future__ import annotations`` was added (or was already
+    # present), unquote string-literal annotations (e.g. ``'DicomPatient'``
+    # → ``DicomPatient``).
+    if has_tc_imports:
+        new_source = _unquote_annotations(new_source)
+
     return new_source, n_changes
 
 

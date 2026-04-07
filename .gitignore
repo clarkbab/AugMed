@@ -4,4 +4,5 @@ profile_*.csv
 profile_*.txt
 dist
 *.egg-info
+.github
 __pycache__

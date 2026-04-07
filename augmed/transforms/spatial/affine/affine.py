@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import torch
 import torch
@@ -323,7 +325,7 @@ class RandomAffine(RandomSpatialTransform):
             translation=self._translation,
         )
 
-    def freeze(self) -> 'Affine':
+    def freeze(self) -> Affine:
         # Expand the range args.
         # We do this now because 'set_dim' could be called after RandomAffine.__init__.
         if self._rotation is not None:
