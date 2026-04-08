@@ -1,13 +1,35 @@
 import numpy as np
 import scipy
 import torch
-import torch
 
-from ..typing import AffineMatrix, AffineMatrixTensor, Box, BoxTensor, Image, LabelImage, Pixel, PixelsTensor, PixelTensor, Point, PointsTensor, PointTensor, Size, Voxel, VoxelsTensor, VoxelTensor
+from ..typing import AffineMatrix, AffineMatrixTensor, Box, BoxTensor, Image, LabelImage, Pixel, PixelsTensor, PixelTensor, Point, PointsTensor, PointTensor, Size, Spacing, SpatialDim, Voxel, VoxelsTensor, VoxelTensor
 from .conversion import to_numpy, to_tensor
-from .matrix import affine_origin, affine_spacing
 
-def com(
+def affine_origin(
+    affine: AffineMatrix,
+    ) -> Point:
+    # Get origin.
+    dim = affine.shape[0] - 1
+    if dim == 2:
+        origin = (affine[0, 2], affine[1, 2])
+    else:
+        origin = (affine[0, 3], affine[1, 3], affine[2, 3])
+
+    return origin
+
+def affine_spacing(
+    affine: AffineMatrix,
+    ) -> Spacing:
+    # Get spacing.
+    dim = affine.shape[0] - 1
+    if dim == 2:
+        spacing = (affine[0, 0], affine[1, 1])
+    else:
+        spacing = (affine[0, 0], affine[1, 1], affine[2, 2])
+
+    return spacing
+
+def centre_of_mass(
     data: Image,
     affine: AffineMatrix | None = None,
     ) -> Point | Pixel | Voxel:
@@ -25,6 +47,35 @@ def com(
         com = to_tensor(com, device=return_device, dtype=torch.float32)
 
     return com
+
+def create_affine(
+    spacing: Spacing,
+    origin: Point,
+    device: torch.device = torch.device('cpu'),
+    dtype: torch.dtype = torch.float32,
+    ) -> torch.Tensor:
+    dim = len(spacing)
+    affine = create_eye(dim, device=device, dtype=dtype)
+    if dim == 2:
+        affine[0, 0] = spacing[0]
+        affine[1, 1] = spacing[1]
+        affine[0, 2] = origin[0]
+        affine[1, 2] = origin[1]
+    else:
+        affine[0, 0] = spacing[0]
+        affine[1, 1] = spacing[1]
+        affine[2, 2] = spacing[2]
+        affine[0, 3] = origin[0]
+        affine[1, 3] = origin[1]
+        affine[2, 3] = origin[2]
+    return affine
+
+def create_eye(
+    dim: SpatialDim,
+    device: torch.device = torch.device('cpu'),
+    dtype: torch.dtype = torch.float32,
+    ) -> torch.Tensor:
+    return torch.eye(dim + 1, device=device, dtype=dtype)
 
 def foreground_fov(
     data: LabelImage,
@@ -163,10 +214,10 @@ def to_image_coords(
     affine = to_tensor(affine, return_type=False)
     spacing = affine_spacing(affine)
     origin = affine_origin(affine)
-    point_im = torch.round((point - origin) / spacing).type(torch.int32)
+    point = torch.round((point - origin) / spacing).type(torch.int32)
     if return_type is np.ndarray:
-        point_im = to_numpy(point_im)
-    return point_im
+        point = to_numpy(point)
+    return point
 
 def to_world_coords(
     point: PixelTensor | PixelsTensor | VoxelTensor | VoxelsTensor,
@@ -176,7 +227,7 @@ def to_world_coords(
     affine = to_tensor(affine, return_type=False)
     spacing = affine_spacing(affine)
     origin = affine_origin(affine)
-    point_w = (point * spacing + origin).type(torch.float32)
+    point = (point * spacing + origin).type(torch.float32)
     if return_type is np.ndarray:
-        point_w = to_numpy(point_w)
-    return point_w
+        point = to_numpy(point)
+    return point

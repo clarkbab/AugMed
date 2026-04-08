@@ -7,8 +7,8 @@ from typing import List, Literal, Tuple
 from ...typing import AffineMatrix, AffineMatrixTensor, ChannelImageTensor, Indices, Number, Points, PointsTensor, Size
 from ...utils.args import arg_to_list, expand_range_arg
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
+from ...utils.geometry import affine_origin, affine_spacing, create_affine
 from ...utils.logging import logger
-from ...utils.matrix import affine_origin, affine_spacing, create_affine
 from ..identity import Identity, get_group_device
 from .spatial import RandomSpatialTransform, SpatialTransform
 

@@ -4,7 +4,7 @@ from typing import Literal
 
 from ..typing import AffineMatrixTensor, ImageTensor, Number, PointsTensor, SizeTensor, SpatialDim
 from ..utils.conversion import to_tensor
-from ..utils.matrix import affine_origin, affine_spacing
+from ..utils.geometry import affine_origin, affine_spacing
 
 # 'grid_sample' can be used for interpolating at points (Nx3) or on image grids (3xXxYxZ).
 # We don't need to know the spatial coordinates of the resampling grid for the interpolation,

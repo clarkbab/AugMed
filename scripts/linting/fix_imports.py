@@ -451,12 +451,48 @@ def _expand_star_import(
 # Collect all names used in the file body (excluding import section)
 # ---------------------------------------------------------------------------
 
+def _collect_annotation_string_ids(tree: ast.AST) -> Set[int]:
+    """Return the ``id()`` of every ``ast.Constant`` string node that appears
+    in a type-annotation context (forward references).
+
+    This covers function parameter annotations, return annotations, variable
+    annotations, and base classes — but NOT regular strings in function bodies,
+    f-strings, docstrings, error messages, etc.
+    """
+    ids: Set[int] = set()
+
+    def _walk_annotation(node: ast.AST) -> None:
+        """Mark all Constant-string nodes inside an annotation subtree."""
+        for child in ast.walk(node):
+            if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                ids.add(id(child))
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.returns:
+                _walk_annotation(node.returns)
+            for arg in (node.args.args + node.args.posonlyargs +
+                        node.args.kwonlyargs):
+                if arg.annotation:
+                    _walk_annotation(arg.annotation)
+            if node.args.vararg and node.args.vararg.annotation:
+                _walk_annotation(node.args.vararg.annotation)
+            if node.args.kwarg and node.args.kwarg.annotation:
+                _walk_annotation(node.args.kwarg.annotation)
+        elif isinstance(node, ast.AnnAssign) and node.annotation:
+            _walk_annotation(node.annotation)
+
+    return ids
+
+
 def _collect_used_names(source: str, import_end_line: int) -> Set[str]:
     """Return all name tokens used in *source* after the import block."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return set()
+
+    annotation_str_ids = _collect_annotation_string_ids(tree)
 
     names: Set[str] = set()
     for node in ast.walk(tree):
@@ -475,11 +511,11 @@ def _collect_used_names(source: str, import_end_line: int) -> Set[str]:
                 root = root.value
             if isinstance(root, ast.Name):
                 names.add(root.id)
-        # Annotations in strings (forward references).
+        # Only extract tokens from strings in annotation positions.
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            # Simple heuristic: if the string looks like a type annotation.
-            for token in re.findall(r'[A-Za-z_]\w*', node.value):
-                names.add(token)
+            if id(node) in annotation_str_ids:
+                for token in re.findall(r'[A-Za-z_]\w*', node.value):
+                    names.add(token)
         elif isinstance(node, ast.FunctionDef) or isinstance(node, ast.AsyncFunctionDef):
             # Collect names from decorators and annotations.
             pass  # ast.walk handles them.
@@ -488,11 +524,18 @@ def _collect_used_names(source: str, import_end_line: int) -> Set[str]:
 
 
 def _collect_all_names_in_source(source: str) -> Set[str]:
-    """Return every Name node's id in the entire source (including type annotations)."""
+    """Return every Name node's id in the entire source (including type annotations).
+
+    For string literals, only tokens inside annotation contexts (forward
+    references) are included — regular strings such as error messages and
+    parameter values are ignored.
+    """
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return set()
+
+    annotation_str_ids = _collect_annotation_string_ids(tree)
 
     names: Set[str] = set()
     for node in ast.walk(tree):
@@ -505,8 +548,9 @@ def _collect_all_names_in_source(source: str) -> Set[str]:
             if isinstance(root, ast.Name):
                 names.add(root.id)
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            for token in re.findall(r'[A-Za-z_]\w*', node.value):
-                names.add(token)
+            if id(node) in annotation_str_ids:
+                for token in re.findall(r'[A-Za-z_]\w*', node.value):
+                    names.add(token)
     return names
 
 

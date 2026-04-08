@@ -5,13 +5,12 @@ import seaborn as sns
 import torch
 from typing import List, Literal
 
-from ..typing import AffineMatrix3D, AffineMatrix3DArray, BatchLabelImage2D, BatchLabelImage3D, BatchLabelImage3DArray, Image, Image2D, Image2DArray, Image3D, Image3DArray, LabelImage3D, Number, Orientation, Point3D, Points, Points3D, Points3DArray, Size3DArray, View
+from ..typing import AffineMatrix3D, AffineMatrix3DArray, BatchLabelImage2D, BatchLabelImage3D, BatchLabelImage3DArray, Image, Image2D, Image2DArray, Image3D, Image3DArray, LabelImage3D, Number, Orientation, Point3D, Points3D, Points3DArray, Size3DArray, View
 from .args import arg_to_list
 from .assertions import assert_orientation
 from .conversion import to_numpy
-from .geometry import com, foreground_fov_centre, fov, to_image_coords
+from .geometry import affine_origin, affine_spacing, centre_of_mass, foreground_fov_centre, fov, to_image_coords
 from .logging import logger
-from .matrix import affine_origin, affine_spacing
 
 VIEWS = ['Sagittal', 'Coronal', 'Axial']
 
@@ -369,7 +368,7 @@ def _get_view_idx(
             label_idx = label_names.index(value)
 
         if centre_method == 'com':
-            centre = com(labels[label_idx], affine=affine)
+            centre = centre_of_mass(labels[label_idx], affine=affine)
         elif centre_method == 'fov':
             centre = foreground_fov_centre(labels[label_idx], affine=affine)
         else:

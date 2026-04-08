@@ -5,7 +5,7 @@ import torch
 from ...typing import SamplingGridTensor, Size, Spacing
 from ...utils.args import alias_kwargs, expand_range_arg
 from ...utils.conversion import to_tensor, to_tuple
-from ...utils.matrix import affine_origin, affine_spacing, create_affine
+from ...utils.geometry import affine_origin, affine_spacing, create_affine
 from ..identity import Identity
 from .grid import GridTransform, RandomGridTransform
 
