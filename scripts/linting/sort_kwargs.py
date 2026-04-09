@@ -62,16 +62,16 @@ def _char_offset(line_offsets: List[int], lineno: int, col: int) -> int:
     return line_offsets[lineno - 1] + col
 
 
-def _get_skip_sort_lines(source: str) -> set:
-    """Return the set of 1-based line numbers that contain a ``# skip_sort`` comment."""
-    lines = set()
-    for i, line in enumerate(source.splitlines(), 1):
-        # Match '# skip_sort' anywhere in a trailing comment.
-        stripped = line.rstrip()
-        idx = stripped.find('#')
-        if idx != -1 and 'skip_sort' in stripped[idx:]:
-            lines.add(i)
-    return lines
+def collect_files(paths: List[str], ext: str) -> List[Path]:
+    """Expand directories and filter out generated / cache folders."""
+    files: List[Path] = []
+    for p in paths:
+        path = Path(p)
+        if path.is_file():
+            files.append(path)
+        elif path.is_dir():
+            files.extend(sorted(path.rglob(f'*{ext}')))
+    return [f for f in files if not _should_skip(f)]
 
 
 def _find_unsorted_calls(source: str) -> List[Tuple[ast.Call, List[ast.keyword], set]]:
@@ -114,6 +114,89 @@ def _find_unsorted_calls(source: str) -> List[Tuple[ast.Call, List[ast.keyword],
     results.sort(key=lambda pair: (pair[1][0].lineno, pair[1][0].col_offset))
     return results
 
+
+def _get_skip_sort_lines(source: str) -> set:
+    """Return the set of 1-based line numbers that contain a ``# skip_sort`` comment."""
+    lines = set()
+    for i, line in enumerate(source.splitlines(), 1):
+        # Match '# skip_sort' anywhere in a trailing comment.
+        stripped = line.rstrip()
+        idx = stripped.find('#')
+        if idx != -1 and 'skip_sort' in stripped[idx:]:
+            lines.add(i)
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# File handling
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description='Sort keyword arguments in function calls alphabetically.')
+    parser.add_argument(
+        'paths', default=['augmed', 'scripts'], help='Files or directories to process',
+        nargs='*')
+    parser.add_argument(
+        '--fix', action='store_true',
+        help='Rewrite files in-place (default: report only)')
+    parser.add_argument(
+        '--ext', default='.py',
+        help='File extension to scan (default: .py)')
+    args = parser.parse_args()
+
+    files = collect_files(args.paths, args.ext)
+    mode = 'Fixing' if args.fix else 'Checking'
+    print(f'{mode} {len(files)} file(s)...\n')
+
+    total = sum(process_file(f, fix=args.fix) for f in files)
+
+    print()
+    if total == 0:
+        print('All kwargs are alphabetically sorted.')
+    elif args.fix:
+        print(f'Fixed {total} call(s) total.')
+    else:
+        print(f'Found {total} unsorted call(s). Re-run with --fix to apply.')
+
+    sys.exit(0 if (total == 0 or args.fix) else 1)
+
+
+def process_file(path: Path, *, fix: bool = False) -> int:
+    """Check / fix one file.  Returns count of unsorted calls."""
+    try:
+        source = path.read_text(encoding='utf-8')
+    except (UnicodeDecodeError, PermissionError):
+        return 0
+
+    try:
+        ast.parse(source)
+    except SyntaxError as exc:
+        print(f'  Syntax error in {path} (line {exc.lineno}): {exc.msg}')
+        return 0
+
+    new_source, n = sort_kwargs(source)
+    if n == 0:
+        return 0
+
+    if fix:
+        path.write_text(new_source, encoding='utf-8')
+        print(f'  Fixed {n} call(s) in {path}')
+    else:
+        print(f'  Found {n} unsorted call(s) in {path}')
+    return n
+
+
+def _should_skip(path: Path) -> bool:
+    return any(
+        any(skip in part for skip in SKIP_PATTERNS)
+        for part in path.parts
+    )
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 def sort_kwargs(source: str) -> Tuple[str, int]:
     """Sort kwargs in *source*.  Returns ``(new_source, n_fixes)``."""
@@ -182,89 +265,6 @@ def sort_kwargs(source: str) -> Tuple[str, int]:
         n_fixed += 1
 
     return source, n_fixed
-
-
-# ---------------------------------------------------------------------------
-# File handling
-# ---------------------------------------------------------------------------
-
-def _should_skip(path: Path) -> bool:
-    return any(
-        any(skip in part for skip in SKIP_PATTERNS)
-        for part in path.parts
-    )
-
-
-def process_file(path: Path, *, fix: bool = False) -> int:
-    """Check / fix one file.  Returns count of unsorted calls."""
-    try:
-        source = path.read_text(encoding='utf-8')
-    except (UnicodeDecodeError, PermissionError):
-        return 0
-
-    try:
-        ast.parse(source)
-    except SyntaxError as exc:
-        print(f'  Syntax error in {path} (line {exc.lineno}): {exc.msg}')
-        return 0
-
-    new_source, n = sort_kwargs(source)
-    if n == 0:
-        return 0
-
-    if fix:
-        path.write_text(new_source, encoding='utf-8')
-        print(f'  Fixed {n} call(s) in {path}')
-    else:
-        print(f'  Found {n} unsorted call(s) in {path}')
-    return n
-
-
-def collect_files(paths: List[str], ext: str) -> List[Path]:
-    """Expand directories and filter out generated / cache folders."""
-    files: List[Path] = []
-    for p in paths:
-        path = Path(p)
-        if path.is_file():
-            files.append(path)
-        elif path.is_dir():
-            files.extend(sorted(path.rglob(f'*{ext}')))
-    return [f for f in files if not _should_skip(f)]
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description='Sort keyword arguments in function calls alphabetically.')
-    parser.add_argument(
-        'paths', default=['augmed', 'scripts'], help='Files or directories to process',
-        nargs='*')
-    parser.add_argument(
-        '--fix', action='store_true',
-        help='Rewrite files in-place (default: report only)')
-    parser.add_argument(
-        '--ext', default='.py',
-        help='File extension to scan (default: .py)')
-    args = parser.parse_args()
-
-    files = collect_files(args.paths, args.ext)
-    mode = 'Fixing' if args.fix else 'Checking'
-    print(f'{mode} {len(files)} file(s)...\n')
-
-    total = sum(process_file(f, fix=args.fix) for f in files)
-
-    print()
-    if total == 0:
-        print('All kwargs are alphabetically sorted.')
-    elif args.fix:
-        print(f'Fixed {total} call(s) total.')
-    else:
-        print(f'Found {total} unsorted call(s). Re-run with --fix to apply.')
-
-    sys.exit(0 if (total == 0 or args.fix) else 1)
 
 
 if __name__ == '__main__':

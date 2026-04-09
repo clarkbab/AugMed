@@ -25,6 +25,87 @@ def _get_view_aspect(
     aspect = float(spacing[axes[1]] / spacing[axes[0]])
     return aspect
 
+def _get_view_idx(
+    view: View,
+    size: Size3DArray,
+    affine: AffineMatrix3DArray | None = None,
+    idx: int | float | str | Point3D | None = None,
+    labels: BatchLabelImage3DArray | None = None,
+    label_names: List[str] | None = None,
+    centre_method: Literal['com', 'fov'] = 'com',
+    points: Points3DArray | None = None,
+    ) -> int:
+    # Default to middle slice.
+    if idx is None:
+        idx = 'p:0.5'
+
+    # Point3D - a 3D world coordinate (tuple, list, np.ndarray, or torch.Tensor).
+    if isinstance(idx, (tuple, list, np.ndarray, torch.Tensor)) and not isinstance(idx, bool):
+        idx = np.asarray(idx).flatten()
+        if len(idx) != 3:
+            raise ValueError(f"Expected a 3-element point for idx but got {len(idx)} elements.")
+        if affine is not None:
+            idx = to_image_coords(idx, affine)
+        return int(np.clip(np.round(idx[view]), 0, size[view] - 1))
+
+    # Scalar world coords.
+    if isinstance(idx, (int, float)) and not isinstance(idx, bool):
+        if affine is not None:
+            idx = to_image_coords(idx, affine)
+        return int(np.clip(np.round(idx), 0, size[view] - 1))
+
+    # String prefixes.
+    if not isinstance(idx, str):
+        raise ValueError(f"Invalid idx: {idx}. Expected int, float, str, Point3D, or None.")
+
+    source, value = idx.split(':')
+
+    # Proportion of field-of-view.
+    if source == 'p':
+        p = float(value)
+        return int(np.clip(np.round(p * (size[view] - 1)), 0, size[view] - 1))
+
+    # Image coords.
+    if source == 'i':
+        return int(np.clip(int(value), 0, size[view] - 1))
+
+    # Label channels - by index (e.g. "labels:0") or name (e.g. "labels:Brainstem").
+    if source in ('label', 'labels'):
+        if labels is None:
+            raise ValueError(f"idx='{idx}' but no labels were provided.")
+
+        # Resolve label index from name or integer string.
+        if value.isdigit():
+            label_idx = int(value)
+        else:
+            if label_names is None:
+                raise ValueError(f"idx='{idx}' uses a label name but no 'label_names' were provided.")
+            if value not in label_names:
+                raise ValueError(f"Label name '{value}' not found in label_names: {label_names}.")
+            label_idx = label_names.index(value)
+
+        if centre_method == 'com':
+            centre = centre_of_mass(labels[label_idx], affine=affine)
+        elif centre_method == 'fov':
+            centre = foreground_fov_centre(labels[label_idx], affine=affine)
+        else:
+            raise ValueError(f"Unknown centre_method '{centre_method}'. Expected 'com' or 'fov'.")
+
+    # Points.
+    elif source == 'points':
+        if points is None:
+            raise ValueError(f"idx='{idx}' but no points were provided.")
+        centre = points[int(value)]
+
+    else:
+        raise ValueError(f"Unknown idx prefix '{source}'. Expected 'p', 'i', 'labels', or 'points'.")
+
+    # Convert world coords to voxel coords.
+    if affine is not None:
+        centre = to_image_coords(centre, affine)
+
+    return int(np.clip(np.round(centre[view]), 0, size[view] - 1))
+
 def _get_view_origin(
     view: View,
     orientation: Orientation = 'LPS',
@@ -138,7 +219,7 @@ def plot_slice(
     # Add histogram.
     if show_hist:
         axs[1].hist(data.flatten(), bins=50, color='gray')
-        axs[1].ticklabel_format(axis='y', style='scientific', scilimits=(0, 0))
+        axs[1].ticklabel_format(axis='y', scilimits=(0, 0), style='scientific')
 
     # Hide axis spines and ticks.
     for p in ['right', 'top', 'bottom', 'left']:
@@ -214,7 +295,7 @@ def plot_volume(
     axs = axs[0]
 
     for col_ax, v in zip(axs, views):
-        resolved_idx = _get_view_idx(v, data.shape, affine=affine, centre_method=centre_method, idx=idx, labels=labels, label_names=label_names, points=points)
+        resolved_idx = _get_view_idx(v, data.shape, affine=affine, centre_method=centre_method, idx=idx, label_names=label_names, labels=labels, points=points)
         image = _get_view_slice(v, data, resolved_idx)
         aspect = _get_view_aspect(v, affine)
         origin_x, origin_y = _get_view_origin(v, orientation=orientation)
@@ -250,7 +331,7 @@ def plot_volume(
             # Add legend on first view only.
             if label_names_list is not None and v == views[0]:
                 handles = [mpl.patches.Patch(facecolor=palette[j], label=label_names_list[j]) for j in range(len(labels)) if j < len(label_names_list)]
-                col_ax.legend(handles=handles, loc='upper right', fontsize='small', framealpha=0.7)
+                col_ax.legend(fontsize='small', framealpha=0.7, handles=handles, loc='upper right')
 
         # Point overlays.
         if points is not None:
@@ -307,84 +388,3 @@ def plot_volume(
 
     plt.tight_layout()
     plt.show()
-
-def _get_view_idx(
-    view: View,
-    size: Size3DArray,
-    affine: AffineMatrix3DArray | None = None,
-    idx: int | float | str | Point3D | None = None,
-    labels: BatchLabelImage3DArray | None = None,
-    label_names: List[str] | None = None,
-    centre_method: Literal['com', 'fov'] = 'com',
-    points: Points3DArray | None = None,
-    ) -> int:
-    # Default to middle slice.
-    if idx is None:
-        idx = 'p:0.5'
-
-    # Point3D - a 3D world coordinate (tuple, list, np.ndarray, or torch.Tensor).
-    if isinstance(idx, (tuple, list, np.ndarray, torch.Tensor)) and not isinstance(idx, bool):
-        idx = np.asarray(idx).flatten()
-        if len(idx) != 3:
-            raise ValueError(f"Expected a 3-element point for idx but got {len(idx)} elements.")
-        if affine is not None:
-            idx = to_image_coords(idx, affine)
-        return int(np.clip(np.round(idx[view]), 0, size[view] - 1))
-
-    # Scalar world coords.
-    if isinstance(idx, (int, float)) and not isinstance(idx, bool):
-        if affine is not None:
-            idx = to_image_coords(idx, affine)
-        return int(np.clip(np.round(idx), 0, size[view] - 1))
-
-    # String prefixes.
-    if not isinstance(idx, str):
-        raise ValueError(f"Invalid idx: {idx}. Expected int, float, str, Point3D, or None.")
-
-    source, value = idx.split(':')
-
-    # Proportion of field-of-view.
-    if source == 'p':
-        p = float(value)
-        return int(np.clip(np.round(p * (size[view] - 1)), 0, size[view] - 1))
-
-    # Image coords.
-    if source == 'i':
-        return int(np.clip(int(value), 0, size[view] - 1))
-
-    # Label channels - by index (e.g. "labels:0") or name (e.g. "labels:Brainstem").
-    if source in ('label', 'labels'):
-        if labels is None:
-            raise ValueError(f"idx='{idx}' but no labels were provided.")
-
-        # Resolve label index from name or integer string.
-        if value.isdigit():
-            label_idx = int(value)
-        else:
-            if label_names is None:
-                raise ValueError(f"idx='{idx}' uses a label name but no 'label_names' were provided.")
-            if value not in label_names:
-                raise ValueError(f"Label name '{value}' not found in label_names: {label_names}.")
-            label_idx = label_names.index(value)
-
-        if centre_method == 'com':
-            centre = centre_of_mass(labels[label_idx], affine=affine)
-        elif centre_method == 'fov':
-            centre = foreground_fov_centre(labels[label_idx], affine=affine)
-        else:
-            raise ValueError(f"Unknown centre_method '{centre_method}'. Expected 'com' or 'fov'.")
-
-    # Points.
-    elif source == 'points':
-        if points is None:
-            raise ValueError(f"idx='{idx}' but no points were provided.")
-        centre = points[int(value)]
-
-    else:
-        raise ValueError(f"Unknown idx prefix '{source}'. Expected 'p', 'i', 'labels', or 'points'.")
-
-    # Convert world coords to voxel coords.
-    if affine is not None:
-        centre = to_image_coords(centre, affine)
-
-    return int(np.clip(np.round(centre[view]), 0, size[view] - 1))

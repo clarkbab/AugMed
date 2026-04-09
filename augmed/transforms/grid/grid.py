@@ -3,8 +3,9 @@ import torch
 from typing import List
 
 from ...typing import AffineMatrix, Image, SamplingGridTensor
-from ...utils.args import alias_kwargs, arg_to_list, to_tuple
-from ...utils.conversion import to_return_format, to_tensor
+from ...utils.args import alias_kwargs, arg_to_list
+from ...utils.conversion import to_return_format, to_tensor, to_tuple
+from ...utils.grid import grid_points, grid_sample
 from ...utils.misc import get_group_device
 from ..transform import RandomTransform, Transform
 

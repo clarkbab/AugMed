@@ -4,7 +4,8 @@ import torch
 from typing import Tuple
 
 from ...typing import ImageTensor, Number
-from ..identity import Identity, to_tensor
+from ...utils.conversion import to_tensor, to_tuple
+from ..identity import Identity
 from .intensity import IntensityTransform, RandomIntensityTransform
 
 # Min:

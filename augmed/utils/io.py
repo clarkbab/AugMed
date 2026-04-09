@@ -12,7 +12,6 @@ from .args import arg_to_list
 
 def load_nifti(
     filepath: FilePath,
-    **kwargs,
     ) -> Tuple[Image3D, AffineMatrix3D]:
     assert filepath.endswith('.nii') or filepath.endswith('.nii.gz'), "Filepath must end with .nii or .nii.gz"
     img = nib.load(filepath)

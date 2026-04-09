@@ -10,7 +10,9 @@ from ....utils.args import alias_kwargs, arg_to_list, expand_range_arg
 from ....utils.conversion import to_return_format, to_tensor, to_tuple
 from ....utils.geometry import create_eye, fov_centre
 from ....utils.matrix import create_rotation, create_scaling, create_translation
-from ..spatial import RandomSpatialTransform, SpatialTransform, get_group_device
+from ....utils.misc import get_group_device
+from ... import Identity
+from ..spatial import RandomSpatialTransform, SpatialTransform
 
 # Flip, Rotation, Translation (and others) should probably subclass this.
 class Affine(SpatialTransform):

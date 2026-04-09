@@ -3,7 +3,7 @@ import torch
 from typing import List, Tuple
 
 from ..typing import AffineMatrix, Image, Number, Points, TransformParams
-from .python import delegates_to
+from .python import bubble_args
 
 def to_numpy(
     data: bool | Number | str | List[bool | Number | str] | np.ndarray | torch.Tensor | torch.Size,
@@ -51,7 +51,7 @@ def to_numpy(
     else:
         return data
 
-@delegates_to(to_numpy)
+@bubble_args(to_numpy)
 def to_list(
     data: bool | Number | str | List[bool | Number | str] | np.ndarray | torch.Tensor | torch.Size,
     **kwargs,
@@ -65,7 +65,7 @@ def to_return_format(
     return_single: bool = True,
     return_types: type | List[type] | None = None,
     other_data: List[AffineMatrix | TransformParams] | None = None,
-) -> Image | Points | List[Image | Points]:
+    ) -> Image | Points | List[Image | Points]:
     # Can't use "arg_to_list" because of circular dependencies.
     if isinstance(data, (np.ndarray, torch.Tensor)):
         data = [data]
@@ -125,7 +125,7 @@ def to_tensor(
     else:
         return data
 
-@delegates_to(to_numpy)
+@bubble_args(to_numpy)
 def to_tuple(
     data: bool | Number | str | List[bool | Number | str] | np.ndarray | torch.Tensor | torch.Size,
     decimals: int | None = None,

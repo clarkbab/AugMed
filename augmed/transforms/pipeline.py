@@ -376,7 +376,7 @@ class FrozenPipeline(Transform):
         gs_groups = [g for g in groups if isinstance(g[0], (GridTransform, SpatialTransform))]
         n_resamples = len(gs_groups)
         if n_resamples > 1:
-            logger.warning(f"Separating grid/spatial transforms with intensity transforms will trigger additional resampling steps " \
+            logger.warn(f"Separating grid/spatial transforms with intensity transforms will trigger additional resampling steps " \
 f"({n_resamples} resamples total for current pipeline). Consider moving intensity transform/s to first/last position.")
 
 # A Pipeline is by default a 'RandomTransform'. Therefore it inherits 'transform_images/points' from

@@ -7,7 +7,7 @@ Rules
 - ``__init__`` always comes first.
 - Methods/functions referenced in sibling decorator expressions come next,
   sorted alphabetically (e.g. ``ensure_loaded`` used as ``@ensure_loaded``,
-  or ``to_numpy`` referenced in ``@delegates_to(to_numpy)``).
+  or ``to_numpy`` referenced in ``@bubble_args(to_numpy)``).
 - Other methods/functions are sorted alphabetically, ignoring leading/trailing
   underscores (e.g. ``_foo`` sorts as ``foo``, ``__bar__`` as ``bar``).
 - Consecutive same-name methods (e.g. ``@property`` getter/setter pairs)
@@ -115,7 +115,7 @@ def _collect_decorator_deps(body: list) -> Set[str]:
     """Return names of sibling functions/methods referenced in decorator expressions.
 
     This catches both direct usage (``@ensure_loaded``) and indirect
-    references (``@delegates_to(to_numpy)``) — any sibling name that
+    references (``@bubble_args(to_numpy)``) — any sibling name that
     appears anywhere in a decorator AST subtree.
     """
     # Collect all names defined as functions in this body.
@@ -136,20 +136,16 @@ def _collect_decorator_deps(body: list) -> Set[str]:
     return deps
 
 
-def _group_consecutive(
-    methods: List[Tuple[int, ast.FunctionDef]],
-) -> List[List[Tuple[int, ast.FunctionDef]]]:
-    """Split *methods* into contiguous runs by their class-body index."""
-    groups: List[List[Tuple[int, ast.FunctionDef]]] = []
-    current = [methods[0]]
-    for j in range(1, len(methods)):
-        if methods[j][0] == methods[j - 1][0] + 1:
-            current.append(methods[j])
-        else:
-            groups.append(current)
-            current = [methods[j]]
-    groups.append(current)
-    return groups
+def collect_files(paths: List[str], ext: str) -> List[Path]:
+    """Expand directories and filter out generated / cache folders."""
+    files: List[Path] = []
+    for p in paths:
+        path = Path(p)
+        if path.is_file():
+            files.append(path)
+        elif path.is_dir():
+            files.extend(sorted(path.rglob(f'*{ext}')))
+    return [f for f in files if not _should_skip(f)]
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +202,93 @@ def _find_unsorted_in_body(
 # Sorting
 # ---------------------------------------------------------------------------
 
+def _group_consecutive(
+    methods: List[Tuple[int, ast.FunctionDef]],
+) -> List[List[Tuple[int, ast.FunctionDef]]]:
+    """Split *methods* into contiguous runs by their class-body index."""
+    groups: List[List[Tuple[int, ast.FunctionDef]]] = []
+    current = [methods[0]]
+    for j in range(1, len(methods)):
+        if methods[j][0] == methods[j - 1][0] + 1:
+            current.append(methods[j])
+        else:
+            groups.append(current)
+            current = [methods[j]]
+    groups.append(current)
+    return groups
+
+
+# ---------------------------------------------------------------------------
+# File handling
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description='Sort method definitions in classes alphabetically.')
+    parser.add_argument(
+        'paths', default=['augmed', 'scripts'], help='Files or directories to process',
+        nargs='*')
+    parser.add_argument(
+        '--fix', action='store_true',
+        help='Rewrite files in-place (default: report only)')
+    parser.add_argument(
+        '--ext', default='.py',
+        help='File extension to scan (default: .py)')
+    args = parser.parse_args()
+
+    files = collect_files(args.paths, args.ext)
+    mode = 'Fixing' if args.fix else 'Checking'
+    print(f'{mode} {len(files)} file(s)...\n')
+
+    total = sum(process_file(f, fix=args.fix) for f in files)
+
+    print()
+    if total == 0:
+        print('All methods are alphabetically sorted.')
+    elif args.fix:
+        print(f'Fixed {total} group(s) total.')
+    else:
+        print(f'Found {total} unsorted group(s). Re-run with --fix to apply.')
+
+    sys.exit(0 if (total == 0 or args.fix) else 1)
+
+
+def process_file(path: Path, *, fix: bool = False) -> int:
+    """Check / fix one file.  Returns count of unsorted groups."""
+    try:
+        source = path.read_text(encoding='utf-8')
+    except (UnicodeDecodeError, PermissionError):
+        return 0
+
+    try:
+        ast.parse(source)
+    except SyntaxError as exc:
+        print(f'  Syntax error in {path} (line {exc.lineno}): {exc.msg}')
+        return 0
+
+    new_source, n = sort_methods(source)
+    if n == 0:
+        return 0
+
+    if fix:
+        path.write_text(new_source, encoding='utf-8')
+        print(f'  Fixed {n} group(s) in {path}')
+    else:
+        print(f'  Found {n} unsorted group(s) in {path}')
+    return n
+
+
+def _should_skip(path: Path) -> bool:
+    return any(
+        any(skip in part for skip in SKIP_PATTERNS)
+        for part in path.parts
+    )
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
 def sort_methods(source: str) -> Tuple[str, int]:
     """Sort methods in *source*.  Returns ``(new_source, n_fixes)``."""
     groups = _find_unsorted_groups(source)
@@ -243,89 +326,6 @@ def sort_methods(source: str) -> Tuple[str, int]:
         lines[region_start - 1 : region_end] = new_region
 
     return ''.join(lines), len(groups)
-
-
-# ---------------------------------------------------------------------------
-# File handling
-# ---------------------------------------------------------------------------
-
-def _should_skip(path: Path) -> bool:
-    return any(
-        any(skip in part for skip in SKIP_PATTERNS)
-        for part in path.parts
-    )
-
-
-def process_file(path: Path, *, fix: bool = False) -> int:
-    """Check / fix one file.  Returns count of unsorted groups."""
-    try:
-        source = path.read_text(encoding='utf-8')
-    except (UnicodeDecodeError, PermissionError):
-        return 0
-
-    try:
-        ast.parse(source)
-    except SyntaxError as exc:
-        print(f'  Syntax error in {path} (line {exc.lineno}): {exc.msg}')
-        return 0
-
-    new_source, n = sort_methods(source)
-    if n == 0:
-        return 0
-
-    if fix:
-        path.write_text(new_source, encoding='utf-8')
-        print(f'  Fixed {n} group(s) in {path}')
-    else:
-        print(f'  Found {n} unsorted group(s) in {path}')
-    return n
-
-
-def collect_files(paths: List[str], ext: str) -> List[Path]:
-    """Expand directories and filter out generated / cache folders."""
-    files: List[Path] = []
-    for p in paths:
-        path = Path(p)
-        if path.is_file():
-            files.append(path)
-        elif path.is_dir():
-            files.extend(sorted(path.rglob(f'*{ext}')))
-    return [f for f in files if not _should_skip(f)]
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description='Sort method definitions in classes alphabetically.')
-    parser.add_argument(
-        'paths', default=['augmed', 'scripts'], help='Files or directories to process',
-        nargs='*')
-    parser.add_argument(
-        '--fix', action='store_true',
-        help='Rewrite files in-place (default: report only)')
-    parser.add_argument(
-        '--ext', default='.py',
-        help='File extension to scan (default: .py)')
-    args = parser.parse_args()
-
-    files = collect_files(args.paths, args.ext)
-    mode = 'Fixing' if args.fix else 'Checking'
-    print(f'{mode} {len(files)} file(s)...\n')
-
-    total = sum(process_file(f, fix=args.fix) for f in files)
-
-    print()
-    if total == 0:
-        print('All methods are alphabetically sorted.')
-    elif args.fix:
-        print(f'Fixed {total} group(s) total.')
-    else:
-        print(f'Found {total} unsorted group(s). Re-run with --fix to apply.')
-
-    sys.exit(0 if (total == 0 or args.fix) else 1)
 
 
 if __name__ == '__main__':

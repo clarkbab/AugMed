@@ -5,7 +5,10 @@ import torch
 from typing import List
 
 from ...typing import Indices, Points, PointsTensor
-from .spatial import SpatialTransform, arg_to_list, get_group_device, to_return_format, to_tensor
+from ...utils.args import arg_to_list
+from ...utils.conversion import to_return_format, to_tensor
+from ...utils.misc import get_group_device
+from .spatial import SpatialTransform
 
 # This is really just a utility class for breaking affine chains in the pipeline
 # for testing purposes. It doesn't actually move objects.

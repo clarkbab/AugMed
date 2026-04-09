@@ -11,6 +11,54 @@ from ..utils.geometry import affine_origin, affine_spacing
 # this information can be added back in after resampling to create the moved image.
 # For 'grid_sample' we just need to know the coordinates of each sample (points, mm) in the moving
 # image (image) and the coordinates of the moving image grid (affine).
+def grid_points(
+    size: SizeTensor,
+    affine: AffineMatrixTensor | None = None,
+    return_superset: bool = False,
+    ) -> PointsTensor:
+    # Get grid points.
+    dim = len(size)
+    grids = torch.meshgrid([torch.arange(s.item()) for s in size], indexing='ij')
+    points = torch.stack(grids, dim=-1).reshape(-1, dim).to(size.device)
+    # Convert from voxel to world coords if affine is provided.
+    if affine is not None:
+        origin = affine_origin(affine)
+        spacing = affine_spacing(affine)
+        points = points * spacing + origin
+
+    # Create superset.
+    if return_superset:
+        # Move points to device for concatenation.
+        # Which device should this go on? Use first GPU if available, because
+        # we're going to have to calculate 'backward_transform_points' on these points.
+        device_types = [d.type for d in devices]
+        super_device = devices[device_types.index('cuda')] if 'cuda' in device_types else devices[0]
+        points = [p.to(super_device) for p in pointses]
+
+        # Get superset of points.
+        # While it might seem like a good idea to create a superset of points to 
+        # reduce transform processing, in practice the act of getting unique points
+        # takes much longer than just transforming them all.
+        # !!! This 'unique' op, over millions of points, takes a looooong time.
+        # This kind of makes the superset idea non-viable.
+        # Apparently it sorts the array first, which might be the slow part.
+        # Our stacked array is not sorted by default.
+        super_points = torch.vstack(points).unique(dim=0)
+
+        # For each image, get the indices of it's points within the superset.
+        # This is required for creating subsets later on after 'backward_transform_points'.
+        indices = []
+        for p, d in zip(pointses, devices):
+            matches = (p[:, None, :].to(super_device) == super_points[None, :, :])
+            matches = matches.all(dim=-1)
+            index = matches.float().argmax(dim=1)
+            index = index.to(d)
+            indices.append(index)
+
+        return super_points, indices
+
+    return points
+
 def grid_sample(
     image: ImageTensor,
     affine: AffineMatrixTensor,
@@ -87,51 +135,3 @@ def grid_sample(
     image_t = image_t.squeeze(axis=tuple(range(image_dims_to_add))) if image_dims_to_add > 0 else image_t
 
     return image_t
-
-def grid_points(
-    size: SizeTensor,
-    affine: AffineMatrixTensor | None = None,
-    return_superset: bool = False,
-    ) -> PointsTensor:
-    # Get grid points.
-    dim = len(size)
-    grids = torch.meshgrid([torch.arange(s.item()) for s in size], indexing='ij')
-    points = torch.stack(grids, dim=-1).reshape(-1, dim).to(size.device)
-    # Convert from voxel to world coords if affine is provided.
-    if affine is not None:
-        origin = affine_origin(affine)
-        spacing = affine_spacing(affine)
-        points = points * spacing + origin
-
-    # Create superset.
-    if return_superset:
-        # Move points to device for concatenation.
-        # Which device should this go on? Use first GPU if available, because
-        # we're going to have to calculate 'backward_transform_points' on these points.
-        device_types = [d.type for d in devices]
-        super_device = devices[device_types.index('cuda')] if 'cuda' in device_types else devices[0]
-        points = [p.to(super_device) for p in pointses]
-
-        # Get superset of points.
-        # While it might seem like a good idea to create a superset of points to 
-        # reduce transform processing, in practice the act of getting unique points
-        # takes much longer than just transforming them all.
-        # !!! This 'unique' op, over millions of points, takes a looooong time.
-        # This kind of makes the superset idea non-viable.
-        # Apparently it sorts the array first, which might be the slow part.
-        # Our stacked array is not sorted by default.
-        super_points = torch.vstack(points).unique(dim=0)
-
-        # For each image, get the indices of it's points within the superset.
-        # This is required for creating subsets later on after 'backward_transform_points'.
-        indices = []
-        for p, d in zip(pointses, devices):
-            matches = (p[:, None, :].to(super_device) == super_points[None, :, :])
-            matches = matches.all(dim=-1)
-            index = matches.float().argmax(dim=1)
-            index = index.to(d)
-            indices.append(index)
-
-        return super_points, indices
-
-    return points

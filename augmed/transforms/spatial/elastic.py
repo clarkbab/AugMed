@@ -9,7 +9,8 @@ from ...utils.args import arg_to_list, expand_range_arg
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
 from ...utils.geometry import affine_origin, affine_spacing, create_affine
 from ...utils.logging import logger
-from ..identity import Identity, get_group_device
+from ...utils.misc import get_group_device
+from ..identity import Identity
 from .spatial import RandomSpatialTransform, SpatialTransform
 
 BATCHING_MEM_P = 0.25
@@ -416,7 +417,7 @@ class Elastic(SpatialTransform):
             control_spacing = self.__control_spacing
         disp_widths = self.__disp_range[:, 1] - self.__disp_range[:, 0]
         if (disp_widths >= control_spacing).any():
-            logger.warning(f"Elastic transforms with displacement widths ({to_tuple(disp_widths)}) >= "
+            logger.warn(f"Elastic transforms with displacement widths ({to_tuple(disp_widths)}) >= "
                 f"control spacings ({to_tuple(control_spacing)}) may produce folding transforms. Such transforms may "
                 f"be non-invertible and could raise errors when performing forward points transform.")
 
@@ -503,6 +504,6 @@ class RandomElastic(RandomSpatialTransform):
     def __warn_folding(self, control_spacing, disp_range) -> None:
         disp_widths = disp_range[:, 1] - disp_range[:, 0]
         if (disp_widths >= control_spacing).any():
-            logger.warning(f"RandomElastic transforms with displacement widths ({to_tuple(disp_widths)}) >= "
+            logger.warn(f"RandomElastic transforms with displacement widths ({to_tuple(disp_widths)}) >= "
                 f"control spacings ({to_tuple(control_spacing)}) may produce folding transforms. Such transforms may "
                 f"be non-invertible and could raise errors when performing forward points transform.")

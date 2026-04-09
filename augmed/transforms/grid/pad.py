@@ -5,10 +5,11 @@ import torch
 from typing import List, Literal, Tuple
 
 from ...typing import AffineMatrix, Indices, Number, Points, SamplingGridTensor, Size
-from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg, to_tuple
-from ...utils.conversion import to_return_format, to_tensor
+from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg
+from ...utils.conversion import to_return_format, to_tensor, to_tuple
 from ...utils.geometry import affine_origin, affine_spacing, create_affine, fov, fov_centre, to_world_coords
-from ..identity import Identity, get_group_device
+from ...utils.misc import get_group_device
+from ..identity import Identity
 from .grid import GridTransform, RandomGridTransform
 
 class Pad(GridTransform):

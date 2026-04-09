@@ -52,18 +52,18 @@ class _Tee:
         self._stream = stream
         self._log_file = log_file
 
-    def write(self, data):
-        self._stream.write(data)
-        self._stream.flush()
-        self._log_file.write(data)
-        self._log_file.flush()
+    def fileno(self):
+        return self._stream.fileno()
 
     def flush(self):
         self._stream.flush()
         self._log_file.flush()
 
-    def fileno(self):
-        return self._stream.fileno()
+    def write(self, data):
+        self._stream.write(data)
+        self._stream.flush()
+        self._log_file.write(data)
+        self._log_file.flush()
 
 # ---------------------------------------------------------------------------
 # Shared configuration (mirrors benchmark.py)
@@ -88,6 +88,102 @@ DIMS = [2, 3]
 
 # ---------------------------------------------------------------------------
 # Data loading (same as benchmark.py)
+# ---------------------------------------------------------------------------
+
+def build_inputs(data: Dict[str, Any], input_mode: str) -> tuple:
+    inputs = [data['ct_data']]
+    if input_mode in ('image-labels', 'image-labels-points'):
+        inputs.append(data['labels'])
+    if input_mode == 'image-labels-points':
+        inputs.append(data['points'])
+    return tuple(inputs)
+
+
+def build_pipeline(steps: List[str], *, device: torch.device, dim: int):
+    from augmed import (
+        MinMax,
+        Pipeline,
+        RandomAffine,
+        RandomCrop,
+        RandomElastic,
+    )
+    transforms = []
+    for s in steps:
+        if s == 'crop':
+            transforms.append(RandomCrop(dim=dim, remove=CROP_REMOVE_MM))
+        elif s == 'affine':
+            transforms.append(RandomAffine(
+                dim=dim,
+                rotation=ROTATION_DEG,
+                scaling=SCALING_RANGE,
+                translation=TRANSLATION_MM,
+            ))
+        elif s == 'elastic':
+            transforms.append(RandomElastic(
+                control_spacing=ELASTIC_SPACING_MM,
+                dim=dim,
+                displacement=ELASTIC_DISP_MM,
+            ))
+        elif s == 'minmax':
+            transforms.append(MinMax(dim=dim, max=MINMAX_RANGE[1], min=MINMAX_RANGE[0]))
+    return Pipeline(transforms, device=device, dim=dim, seed=42)
+
+
+def cprofile_run(
+    steps: List[str],
+    *,
+    data: Dict[str, Any],
+    device: torch.device,
+    dim: int,
+    input_mode: str,
+    n_runs: int,
+    save_prof: str | None = None,
+    top: int = 40,
+) -> str:
+    """Run augmed pipeline under cProfile and print/return top functions."""
+    pipeline = build_pipeline(steps, device=device, dim=dim)
+    inputs = build_inputs(data, input_mode)
+
+    def run():
+        for _ in range(n_runs):
+            pipeline.transform(*inputs, affine=data['affine'])
+            if device.type == 'cuda':
+                torch.cuda.synchronize()
+
+    # Warmup.
+    pipeline.transform(*inputs, affine=data['affine'])
+    if device.type == 'cuda':
+        torch.cuda.synchronize()
+
+    prof = cProfile.Profile()
+    prof.enable()
+    run()
+    prof.disable()
+
+    if save_prof:
+        prof.dump_stats(save_prof)
+        print(f'  Saved profile to {save_prof}')
+
+    # Print summary.
+    s = io.StringIO()
+    ps = pstats.Stats(prof, stream=s)
+    ps.sort_stats('cumulative')
+    ps.print_stats(top)
+    print(s.getvalue())
+
+    # Also print a callers view for the hot functions.
+    s2 = io.StringIO()
+    ps2 = pstats.Stats(prof, stream=s2)
+    ps2.sort_stats('tottime')
+    ps2.print_stats(20)
+    print('\n--- Top by total time ---')
+    print(s2.getvalue())
+
+    return s.getvalue() + '\n--- Top by total time ---\n' + s2.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Pipeline construction
 # ---------------------------------------------------------------------------
 
 def load_data(device: torch.device, dim: int) -> Dict[str, Any]:
@@ -138,6 +234,10 @@ def _load_data_2d(device: torch.device) -> Dict[str, Any]:
     return dict(affine=affine, ct_data=ct_data, labels=labels, points=points)
 
 
+# ---------------------------------------------------------------------------
+# Phase-level timing (instruments the internal pipeline stages)
+# ---------------------------------------------------------------------------
+
 def _load_data_3d(device: torch.device) -> Dict[str, Any]:
     try:
         from augmed.data.examples import load_example_ct
@@ -162,51 +262,33 @@ def _load_data_3d(device: torch.device) -> Dict[str, Any]:
     return dict(affine=affine, ct_data=ct_data, labels=labels, points=points)
 
 
-# ---------------------------------------------------------------------------
-# Pipeline construction
-# ---------------------------------------------------------------------------
+def main() -> None:
+    parser = argparse.ArgumentParser(description='Profile augmed transform pipelines.')
+    parser.add_argument('--n-runs', default=3, help='Number of profiled runs per config (default: 3)', type=int)
+    parser.add_argument('--save-prof', action='store_true', help='Save .prof files for external tools (snakeviz, etc.)')
+    parser.add_argument('--top', default=40, help='Number of top cProfile entries to show (default: 40)', type=int)
+    args = parser.parse_args()
 
-def build_pipeline(steps: List[str], *, device: torch.device, dim: int):
-    from augmed import (
-        MinMax,
-        Pipeline,
-        RandomAffine,
-        RandomCrop,
-        RandomElastic,
-    )
-    transforms = []
-    for s in steps:
-        if s == 'crop':
-            transforms.append(RandomCrop(dim=dim, remove=CROP_REMOVE_MM))
-        elif s == 'affine':
-            transforms.append(RandomAffine(
-                dim=dim,
-                rotation=ROTATION_DEG,
-                scaling=SCALING_RANGE,
-                translation=TRANSLATION_MM,
-            ))
-        elif s == 'elastic':
-            transforms.append(RandomElastic(
-                control_spacing=ELASTIC_SPACING_MM,
-                dim=dim,
-                displacement=ELASTIC_DISP_MM,
-            ))
-        elif s == 'minmax':
-            transforms.append(MinMax(dim=dim, max=MINMAX_RANGE[1], min=MINMAX_RANGE[0]))
-    return Pipeline(transforms, device=device, dim=dim, seed=42)
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    base = Path(__file__).parent / f'profile_{args.n_runs}_{ts}'
+    stdout_log = str(base.with_name(base.name + '_stdout.txt'))
+    stderr_log = str(base.with_name(base.name + '_stderr.txt'))
 
-
-def build_inputs(data: Dict[str, Any], input_mode: str) -> tuple:
-    inputs = [data['ct_data']]
-    if input_mode in ('image-labels', 'image-labels-points'):
-        inputs.append(data['labels'])
-    if input_mode == 'image-labels-points':
-        inputs.append(data['points'])
-    return tuple(inputs)
+    # Tee stdout/stderr to log files so output streams as the profiler runs.
+    with open(stdout_log, 'w', encoding='utf-8') as fout, \
+         open(stderr_log, 'w', encoding='utf-8') as ferr:
+        old_stdout, old_stderr = sys.stdout, sys.stderr
+        sys.stdout = _Tee(old_stdout, fout)
+        sys.stderr = _Tee(old_stderr, ferr)
+        try:
+            _run(args)
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
 
 
 # ---------------------------------------------------------------------------
-# Phase-level timing (instruments the internal pipeline stages)
+# cProfile wrapper
 # ---------------------------------------------------------------------------
 
 def phase_profile(
@@ -290,6 +372,10 @@ def phase_profile(
     # Average
     return {k: v / n_runs for k, v in accum.items()}
 
+
+# ---------------------------------------------------------------------------
+# CLI + main
+# ---------------------------------------------------------------------------
 
 def phase_profile_detailed(
     steps: List[str],
@@ -390,68 +476,6 @@ def phase_profile_detailed(
     avg['backward'] = max(0.0, avg['total'] - avg['freeze'] - avg['grid_pts'] - avg['resample'])
     return avg
 
-
-# ---------------------------------------------------------------------------
-# cProfile wrapper
-# ---------------------------------------------------------------------------
-
-def cprofile_run(
-    steps: List[str],
-    *,
-    data: Dict[str, Any],
-    device: torch.device,
-    dim: int,
-    input_mode: str,
-    n_runs: int,
-    save_prof: str | None = None,
-    top: int = 40,
-) -> str:
-    """Run augmed pipeline under cProfile and print/return top functions."""
-    pipeline = build_pipeline(steps, device=device, dim=dim)
-    inputs = build_inputs(data, input_mode)
-
-    def run():
-        for _ in range(n_runs):
-            pipeline.transform(*inputs, affine=data['affine'])
-            if device.type == 'cuda':
-                torch.cuda.synchronize()
-
-    # Warmup.
-    pipeline.transform(*inputs, affine=data['affine'])
-    if device.type == 'cuda':
-        torch.cuda.synchronize()
-
-    prof = cProfile.Profile()
-    prof.enable()
-    run()
-    prof.disable()
-
-    if save_prof:
-        prof.dump_stats(save_prof)
-        print(f'  Saved profile to {save_prof}')
-
-    # Print summary.
-    s = io.StringIO()
-    ps = pstats.Stats(prof, stream=s)
-    ps.sort_stats('cumulative')
-    ps.print_stats(top)
-    print(s.getvalue())
-
-    # Also print a callers view for the hot functions.
-    s2 = io.StringIO()
-    ps2 = pstats.Stats(prof, stream=s2)
-    ps2.sort_stats('tottime')
-    ps2.print_stats(20)
-    print('\n--- Top by total time ---')
-    print(s2.getvalue())
-
-    return s.getvalue() + '\n--- Top by total time ---\n' + s2.getvalue()
-
-
-# ---------------------------------------------------------------------------
-# CLI + main
-# ---------------------------------------------------------------------------
-
 def _run(args: argparse.Namespace) -> None:
     """Core profiling logic — called either directly or from main()."""
     n_runs = args.n_runs
@@ -550,30 +574,6 @@ def _run(args: argparse.Namespace) -> None:
     print(f'\nResults saved to {output}')
     print(f'cProfile details saved to {output_txt}')
     print(f'Total wall-clock time: {wall_elapsed:.1f}s')
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description='Profile augmed transform pipelines.')
-    parser.add_argument('--n-runs', default=3, help='Number of profiled runs per config (default: 3)', type=int)
-    parser.add_argument('--save-prof', action='store_true', help='Save .prof files for external tools (snakeviz, etc.)')
-    parser.add_argument('--top', default=40, help='Number of top cProfile entries to show (default: 40)', type=int)
-    args = parser.parse_args()
-
-    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-    base = Path(__file__).parent / f'profile_{args.n_runs}_{ts}'
-    stdout_log = str(base.with_name(base.name + '_stdout.txt'))
-    stderr_log = str(base.with_name(base.name + '_stderr.txt'))
-
-    # Tee stdout/stderr to log files so output streams as the profiler runs.
-    with open(stdout_log, 'w', encoding='utf-8') as fout, \
-         open(stderr_log, 'w', encoding='utf-8') as ferr:
-        old_stdout, old_stderr = sys.stdout, sys.stderr
-        sys.stdout = _Tee(old_stdout, fout)
-        sys.stderr = _Tee(old_stderr, ferr)
-        try:
-            _run(args)
-        finally:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
 
 if __name__ == '__main__':
     main()

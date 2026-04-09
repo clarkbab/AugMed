@@ -64,51 +64,6 @@ CT_SHAPE_3D = (512, 512, 107)
 CT_SPACING_2D = (1.12, 1.12)
 CT_SPACING_3D = (1.12, 1.12, 3.0)
 
-def load_data(
-    device: torch.device,
-    dim: int,
-    ) -> Tuple[AffineMatrixTensor, ImageTensor, BatchLabelImageTensor, PointsTensor]:
-    if dim == 3:
-        return load_3d_data(device)
-    return load_2d_data(device)
-
-def load_2d_data(device: torch.device) -> Tuple[AffineMatrix2DTensor, Image2DTensor, BatchLabelImage2DTensor, Points2DTensor]:
-    ct_data, affine, labels, points = load_example_ct()
-
-    # Extract middle slice for 2D test and project points.
-    idx = ct_data.shape[2] // 2
-    ct_data = ct_data[:, :, idx]
-    labels = labels[:, :, :, idx]
-    points = points[:, :2]
-
-    # Get 2D affine.
-    affine = to_tensor(affine, device=device, dtype=torch.float32)
-    affine_2d = torch.zeros(3, 3, device=device, dtype=torch.float32)
-    affine_2d[:2, :2] = torch.as_tensor(affine[:2, :2])
-    affine_2d[:2, 2] = torch.as_tensor(affine[:2, 3])
-    affine_2d[2, 2] = 1.0
-    affine = affine_2d
-
-    assert ct_data.shape == CT_SHAPE_2D, f'Expected CT shape {CT_SHAPE_2D}, got {ct_data.shape}'
-
-    ct_data = to_tensor(ct_data, device=device, dtype=torch.float32)
-    affine = to_tensor(affine, device=device, dtype=torch.float32)
-    labels = to_tensor(labels, device=device, dtype=torch.bool)
-    points = to_tensor(points, device=device, dtype=torch.float32)
-
-    return affine, ct_data, labels, points
-
-def load_3d_data(device: torch.device) -> Tuple[AffineMatrix3DTensor, Image3DTensor, BatchLabelImage3DTensor, Points3DTensor]:
-    ct_data, affine, labels, points = load_example_ct()
-    assert ct_data.shape == CT_SHAPE_3D, f'Expected CT shape {CT_SHAPE_3D}, got {ct_data.shape}'
-    ct_data = to_tensor(ct_data, device=device, dtype=torch.float32)
-    affine = to_tensor(affine, device=device, dtype=torch.float32)
-    labels = to_tensor(labels, device=device, dtype=torch.bool)
-    points = to_tensor(points, device=device, dtype=torch.float32)
-    return affine, ct_data, labels, points
-
-# Create augmed methods.
-
 def build_augmed_pipeline(
     device: torch.device,
     dim: int,
@@ -137,23 +92,6 @@ def build_augmed_pipeline(
             raise ValueError(f'Unknown step: {s}')
 
     return Pipeline(transforms, device=device, dim=dim)
-
-def run_augmed_pipeline(
-    pipeline: Pipeline,
-    dim: int,
-    image: torch.Tensor = None,
-    affine: torch.Tensor = None,
-    labels: torch.Tensor = None,
-    points: torch.Tensor = None,
-    ) -> Tuple[Any, ...]:
-    inputs = [image]
-    if labels is not None:
-        inputs.append(labels)
-    if points is not None:
-        inputs.append(points)
-    return pipeline.transform(*inputs, affine=affine)
-
-# Build monai methods.
 
 def build_monai_pipeline(
     device: torch.device,
@@ -210,24 +148,6 @@ def build_monai_pipeline(
 
     return Compose(transforms)
 
-def run_monai_pipeline(
-    pipeline: Compose,
-    dim: int,
-    affine: torch.Tensor = None,
-    image: torch.Tensor = None,
-    labels: torch.Tensor = None,
-    points: torch.Tensor = None,
-    ) -> dict:
-    sample = {'image': image.unsqueeze(0)}
-    if labels is not None:
-        sample['label'] = labels
-    result = pipeline(sample)
-    if image.device.type == 'cuda':
-        torch.cuda.synchronize()
-    return result
-
-# Build torchio methods.
-
 def build_torchio_pipeline(
     device: torch.device,
     dim: int,
@@ -264,30 +184,52 @@ def build_torchio_pipeline(
 
     return TioCompose(transforms)
 
-def run_torchio_pipeline(
-    pipeline: TioCompose,
+# Create augmed methods.
+
+def load_2d_data(device: torch.device) -> Tuple[AffineMatrix2DTensor, Image2DTensor, BatchLabelImage2DTensor, Points2DTensor]:
+    ct_data, affine, labels, points = load_example_ct()
+
+    # Extract middle slice for 2D test and project points.
+    idx = ct_data.shape[2] // 2
+    ct_data = ct_data[:, :, idx]
+    labels = labels[:, :, :, idx]
+    points = points[:, :2]
+
+    # Get 2D affine.
+    affine = to_tensor(affine, device=device, dtype=torch.float32)
+    affine_2d = torch.zeros(3, 3, device=device, dtype=torch.float32)
+    affine_2d[:2, :2] = torch.as_tensor(affine[:2, :2])
+    affine_2d[:2, 2] = torch.as_tensor(affine[:2, 3])
+    affine_2d[2, 2] = 1.0
+    affine = affine_2d
+
+    assert ct_data.shape == CT_SHAPE_2D, f'Expected CT shape {CT_SHAPE_2D}, got {ct_data.shape}'
+
+    ct_data = to_tensor(ct_data, device=device, dtype=torch.float32)
+    affine = to_tensor(affine, device=device, dtype=torch.float32)
+    labels = to_tensor(labels, device=device, dtype=torch.bool)
+    points = to_tensor(points, device=device, dtype=torch.float32)
+
+    return affine, ct_data, labels, points
+
+def load_3d_data(device: torch.device) -> Tuple[AffineMatrix3DTensor, Image3DTensor, BatchLabelImage3DTensor, Points3DTensor]:
+    ct_data, affine, labels, points = load_example_ct()
+    assert ct_data.shape == CT_SHAPE_3D, f'Expected CT shape {CT_SHAPE_3D}, got {ct_data.shape}'
+    ct_data = to_tensor(ct_data, device=device, dtype=torch.float32)
+    affine = to_tensor(affine, device=device, dtype=torch.float32)
+    labels = to_tensor(labels, device=device, dtype=torch.bool)
+    points = to_tensor(points, device=device, dtype=torch.float32)
+    return affine, ct_data, labels, points
+
+# Build monai methods.
+
+def load_data(
+    device: torch.device,
     dim: int,
-    affine: torch.Tensor = None,
-    image: torch.Tensor = None,
-    labels: torch.Tensor = None,
-    points: torch.Tensor = None,
-    ) -> Subject:
-    # TorchIO expects 4-D tensors (C, D, H, W). For 2-D data add a
-    # singleton depth dimension so the transforms still apply.
-    img_tensor = image.unsqueeze(0).cpu()
-    if dim == 2:
-        img_tensor = img_tensor.unsqueeze(1)
-    kwargs = dict(image=ScalarImage(tensor=img_tensor))
-    if labels is not None:
-        lbl_tensor = labels.cpu()
-        if dim == 2:
-            lbl_tensor = lbl_tensor.unsqueeze(1)
-        kwargs['label'] = LabelMap(tensor=lbl_tensor)
-    subject = Subject(**kwargs)
-    result = pipeline(subject)
-    if image.device.type == 'cuda':
-        torch.cuda.synchronize()
-    return result
+    ) -> Tuple[AffineMatrixTensor, ImageTensor, BatchLabelImageTensor, PointsTensor]:
+    if dim == 3:
+        return load_3d_data(device)
+    return load_2d_data(device)
 
 def measure_run(
     pipeline: Any,
@@ -324,6 +266,64 @@ def measure_run(
     )
 
     return stats
+
+# Build torchio methods.
+
+def run_augmed_pipeline(
+    pipeline: Pipeline,
+    dim: int,
+    image: torch.Tensor = None,
+    affine: torch.Tensor = None,
+    labels: torch.Tensor = None,
+    points: torch.Tensor = None,
+    ) -> Tuple[Any, ...]:
+    inputs = [image]
+    if labels is not None:
+        inputs.append(labels)
+    if points is not None:
+        inputs.append(points)
+    return pipeline.transform(*inputs, affine=affine)
+
+def run_monai_pipeline(
+    pipeline: Compose,
+    dim: int,
+    affine: torch.Tensor = None,
+    image: torch.Tensor = None,
+    labels: torch.Tensor = None,
+    points: torch.Tensor = None,
+    ) -> dict:
+    sample = {'image': image.unsqueeze(0)}
+    if labels is not None:
+        sample['label'] = labels
+    result = pipeline(sample)
+    if image.device.type == 'cuda':
+        torch.cuda.synchronize()
+    return result
+
+def run_torchio_pipeline(
+    pipeline: TioCompose,
+    dim: int,
+    affine: torch.Tensor = None,
+    image: torch.Tensor = None,
+    labels: torch.Tensor = None,
+    points: torch.Tensor = None,
+    ) -> Subject:
+    # TorchIO expects 4-D tensors (C, D, H, W). For 2-D data add a
+    # singleton depth dimension so the transforms still apply.
+    img_tensor = image.unsqueeze(0).cpu()
+    if dim == 2:
+        img_tensor = img_tensor.unsqueeze(1)
+    kwargs = dict(image=ScalarImage(tensor=img_tensor))
+    if labels is not None:
+        lbl_tensor = labels.cpu()
+        if dim == 2:
+            lbl_tensor = lbl_tensor.unsqueeze(1)
+        kwargs['label'] = LabelMap(tensor=lbl_tensor)
+    subject = Subject(**kwargs)
+    result = pipeline(subject)
+    if image.device.type == 'cuda':
+        torch.cuda.synchronize()
+    return result
 
 LIBRARY_METHODS = {
     'augmed': (build_augmed_pipeline, run_augmed_pipeline),
@@ -375,8 +375,8 @@ def benchmark(
 
                         # Pass the required data for this input mode.
                         input_kwargs = dict(
-                            image=ct_data,
                             affine=affine,
+                            image=ct_data,
                         )
                         if input_mode in ('image-labels', 'image-labels-points'):
                             input_kwargs['labels'] = labels
@@ -484,18 +484,18 @@ class _Tee:
         self._stream = stream
         self._log_file = log_file
 
-    def write(self, data):
-        self._stream.write(data)
-        self._stream.flush()
-        self._log_file.write(data)
-        self._log_file.flush()
+    def fileno(self):
+        return self._stream.fileno()
 
     def flush(self):
         self._stream.flush()
         self._log_file.flush()
 
-    def fileno(self):
-        return self._stream.fileno()
+    def write(self, data):
+        self._stream.write(data)
+        self._stream.flush()
+        self._log_file.write(data)
+        self._log_file.flush()
 
 if __name__ == '__main__':
     run_benchmark()

@@ -35,7 +35,7 @@ class CallVisitor(ast.NodeVisitor):
                 else:
                     self.__kwargs.append(k.arg)
 
-def delegates_to(*inner_fns: Callable) -> Callable:
+def bubble_args(*inner_fns: Callable) -> Callable:
     if is_windows() or not version(gte='3.9'):
         # Ast unparse is not available in Python < 3.9.
         return lambda f: f
