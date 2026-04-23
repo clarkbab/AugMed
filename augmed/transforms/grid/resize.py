@@ -15,10 +15,10 @@ from .grid import GridTransform, RandomGridTransform
 # 3. If we change both size/spacing, geometry is screwed. Should not allow.
 
 class Resize(GridTransform):
-    @alias_kwargs([
+    @alias_kwargs(
         ('sp', 'spacing'),
         ('sz', 'size'),
-    ])
+    )
     def __init__(
         self,
         size: int | Size | None = None,
@@ -69,10 +69,10 @@ class Resize(GridTransform):
         return size_t, affine_t
 
 class RandomResize(RandomGridTransform):
-    @alias_kwargs([
+    @alias_kwargs(
         ('sp', 'spacing'),
         ('sz', 'size'),
-    ])
+    )
     def __init__(
         self,
         size: int | Size | None = None,

@@ -92,13 +92,13 @@ class Transform:
     # Originally this was defined as a mixin to avoid having RandomTransforms override the method.
     # However, as a mixin, each new transform class needs to subclass the mixin also, which creates
     # more boilerplate for new transforms.
-    @alias_kwargs([
+    @alias_kwargs(
         ('a', 'affine'),
         ('fo', 'filter_offgrid'),
         ('ra', 'return_affine'),
         ('rp', 'return_params'),
         ('s', 'size'),
-    ])
+    )
     # Can pass a single array/tensor or a list of arrays/tensors.
     # Points arrays/tensors are inferred by their Nx2/3 shape. It's unlikely that images of this size will
     # be passed, but it would break.

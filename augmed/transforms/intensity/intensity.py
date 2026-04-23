@@ -5,7 +5,7 @@ from typing import List
 from ...typing import AffineMatrix, Image, ImageTensor, Indices, Points
 from ...utils.args import alias_kwargs, arg_to_list
 from ...utils.conversion import to_return_format, to_tensor
-from ...utils.misc import get_group_device
+from ...utils.python import get_group_device
 from ..transform import RandomTransform, Transform
 
 # These transforms change pixel/voxel intensities.
@@ -15,9 +15,9 @@ class IntensityTransform(Transform):
         **kwargs) -> None:
         super().__init__(**kwargs)
 
-    @alias_kwargs([
+    @alias_kwargs(
         ('a', 'affine'),
-    ])
+    )
     def transform_images(
         self,
         image: Image | List[Image],

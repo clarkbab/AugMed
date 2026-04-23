@@ -10,19 +10,19 @@ from ....utils.args import alias_kwargs, arg_to_list, expand_range_arg
 from ....utils.conversion import to_return_format, to_tensor, to_tuple
 from ....utils.geometry import create_eye, fov_centre
 from ....utils.matrix import create_rotation, create_scaling, create_translation
-from ....utils.misc import get_group_device
+from ....utils.python import get_group_device
 from ... import Identity
 from ..spatial import RandomSpatialTransform, SpatialTransform
 
 # Flip, Rotation, Translation (and others) should probably subclass this.
 class Affine(SpatialTransform):
-    @alias_kwargs([
+    @alias_kwargs(
         ('r', 'rotation'),
         ('rc', 'rotation_centre'),
         ('s', 'scaling'),
         ('sc', 'scaling_centre'),
         ('t', 'translation'),
-    ])
+    )
     def __init__(
         self,
         rotation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = None,
@@ -296,13 +296,13 @@ class Affine(SpatialTransform):
         return results
 
 class RandomAffine(RandomSpatialTransform):
-    @alias_kwargs([
+    @alias_kwargs(
         ('r', 'rotation'),
         ('rc', 'rotation_centre'),
         ('s', 'scaling'),
         ('sc', 'scaling_centre'),
         ('t', 'translation'),
-    ])
+    )
     def __init__(
         self,
         rotation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = 15.0,

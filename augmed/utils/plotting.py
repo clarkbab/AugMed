@@ -5,14 +5,25 @@ import seaborn as sns
 import torch
 from typing import List, Literal
 
-from ..typing import AffineMatrix3D, AffineMatrix3DArray, BatchLabelImage2D, BatchLabelImage3D, BatchLabelImage3DArray, Image, Image2D, Image2DArray, Image3D, Image3DArray, LabelImage3D, Number, Orientation, Point3D, Points3D, Points3DArray, Size3DArray, View
-from .args import arg_to_list
+from ..typing import AffineMatrix2D, AffineMatrix3D, AffineMatrix3DArray, BatchLabelImage2D, BatchLabelImage3D, BatchLabelImage3DArray, Image, Image2D, Image2DArray, Image3D, Image3DArray, LabelImage2D, LabelImage3D, Number, Orientation, Point2D, Point3D, Points2D, Points3D, Points3DArray, Size3DArray, View
+from .args import alias_kwargs, arg_to_list
 from .assertions import assert_orientation
 from .conversion import to_numpy
 from .geometry import affine_origin, affine_spacing, centre_of_mass, foreground_fov_centre, fov, to_image_coords
 from .logging import logger
 
 VIEWS = ['Sagittal', 'Coronal', 'Axial']
+
+# CT windowing presets: (width, level).
+Window = str | tuple[Number, Number]
+WINDOW_PRESETS = {
+    'bone': (1800, 400),
+    'brain': (80, 40),
+    'liver': (150, 30),
+    'lung': (1500, -600),
+    'mediastinum': (350, 50),
+    'tissue': (400, 50),
+}
 
 def _get_view_aspect(
     view: View,
@@ -37,7 +48,7 @@ def _get_view_idx(
     ) -> int:
     # Default to middle slice.
     if idx is None:
-        idx = 'p:0.5'
+        idx = 'f:0.5'
 
     # Point3D - a 3D world coordinate (tuple, list, np.ndarray, or torch.Tensor).
     if isinstance(idx, (tuple, list, np.ndarray, torch.Tensor)) and not isinstance(idx, bool):
@@ -61,7 +72,7 @@ def _get_view_idx(
     source, value = idx.split(':')
 
     # Proportion of field-of-view.
-    if source == 'p':
+    if source == 'f':
         p = float(value)
         return int(np.clip(np.round(p * (size[view] - 1)), 0, size[view] - 1))
 
@@ -70,7 +81,7 @@ def _get_view_idx(
         return int(np.clip(int(value), 0, size[view] - 1))
 
     # Label channels - by index (e.g. "labels:0") or name (e.g. "labels:Brainstem").
-    if source in ('label', 'labels'):
+    if source in ('l', 'label', 'labels'):
         if labels is None:
             raise ValueError(f"idx='{idx}' but no labels were provided.")
 
@@ -92,13 +103,13 @@ def _get_view_idx(
             raise ValueError(f"Unknown centre_method '{centre_method}'. Expected 'com' or 'fov'.")
 
     # Points.
-    elif source == 'points':
+    elif source in ('p', 'point', 'points'):
         if points is None:
             raise ValueError(f"idx='{idx}' but no points were provided.")
         centre = points[int(value)]
 
     else:
-        raise ValueError(f"Unknown idx prefix '{source}'. Expected 'p', 'i', 'labels', or 'points'.")
+        raise ValueError(f"Unknown idx prefix '{source}'. Expected 'f', 'i', 'l', 'label', 'labels', 'p', 'point', or 'points'.")
 
     # Convert world coords to voxel coords.
     if affine is not None:
@@ -146,10 +157,11 @@ def plot_hist(
     log_scale: bool = False,
     min: Number | None = None,
     max: Number | None = None,
+    return_axis: bool = False,
     title: str | None = None,
     x_label: str | None = None,
     y_label: str | None = None,
-    ) -> mpl.axes.Axes:
+    ) -> mpl.axes.Axes | None:
     data = to_numpy(data)
     if ax is None:
         ax = plt.gca()
@@ -174,27 +186,50 @@ def plot_hist(
     if show:
         plt.show()
 
-    return ax
+    if return_axis:
+        return ax
 
 def plot_slice(
-    data: Image2D,
+    data: Image2D | None,
+    affine: AffineMatrix2D | None = None,
     alpha: float = 0.3,
     ax: mpl.axes.Axes | None = None,
     cmap: str = 'gray',
-    labels: BatchLabelImage2D | None = None,
+    labels: LabelImage2D | BatchLabelImage2D | None = None,
+    points: Point2D | Points2D | None = None,
+    points_colour: str = 'yellow',
+    return_axis: bool = False,
     show_hist: bool = False,
+    show_point_idxs: bool = False,
     title: str | None = None,
+    use_image_coords: bool = False,
     vmin: float | None = None,
     vmax: float | None = None,
+    window: Window | None = None,
     x_label: str | None = None,
     x_origin: Literal['lower', 'upper'] | None = 'lower',
     y_label: str | None = None,
     y_origin: Literal['lower', 'upper'] | None = 'upper',
-    ) -> mpl.axes.Axes:
+    ) -> mpl.axes.Axes | None:
+    if data is None:
+        assert labels is not None, "Labels must be provided if data is None."
+        data = np.zeros(labels.shape[-2:])
+
+    # Resolve window to vmin/vmax.
+    vmin, vmax = __resolve_window(window, vmin, vmax)
+
+    # Normalise labels to batch form (B, X, Y).
+    if labels is not None and labels.ndim == 2:
+        labels = labels[np.newaxis]
     if isinstance(data, torch.Tensor):
         data = data.cpu().numpy()
     if isinstance(labels, torch.Tensor):
         labels = labels.cpu().numpy()
+    if isinstance(affine, torch.Tensor):
+        affine = affine.cpu().numpy()
+    if labels is not None and labels.dtype != bool:
+        if labels.min() < 0 or labels.max() > 1:
+            logger.warn(f"Labels values are outside the range [0, 1]. Got min={labels.min():.3f}, max={labels.max():.3f}.")
     if ax is None:
         if show_hist:
             _, axs = plt.subplots(1, 2, figsize=(12, 6), gridspec_kw={'width_ratios': [3, 1]})
@@ -205,8 +240,14 @@ def plot_slice(
         axs = [ax]
         show = False
 
+    # Aspect ratio from affine.
+    aspect = None
+    if affine is not None:
+        spacing = affine_spacing(affine)
+        aspect = float(spacing[1] / spacing[0])
+
     # Plot slice.
-    axs[0].imshow(data.T, cmap=cmap, origin=y_origin, vmax=vmax, vmin=vmin)
+    axs[0].imshow(data.T, aspect=aspect, cmap=cmap, origin=y_origin, vmax=vmax, vmin=vmin)
 
     # Plot labels.
     if labels is not None:
@@ -216,16 +257,53 @@ def plot_slice(
             axs[0].imshow(l.T, alpha=alpha, cmap=cmap_label)
             axs[0].contour(l.T, colors=[palette[i]], levels=[.5], linestyles='solid')
 
+    # Plot points.
+    if points is not None:
+        points = to_numpy(points)
+        if points.ndim == 1:
+            points = points[np.newaxis, :]
+        assert points.ndim == 2 and points.shape[1] == 2, f"Expected points to have shape (N, 2) but got {points.shape}."
+        if affine is not None:
+            spacing = affine_spacing(affine)
+            origin = affine_origin(affine)
+        if points_colour == 'gradient' and len(points) > 1:
+            points_cmap = mpl.colors.LinearSegmentedColormap.from_list('warm_bright', ['#FFE600', '#FF8C00', '#FF3300', '#FF0066'])
+            p_colours = [points_cmap(i / (len(points) - 1)) for i in range(len(points))]
+        else:
+            p_colours = [points_colour] * len(points)
+        for pi, p in enumerate(points):
+            vox = (p - origin) / spacing if affine is not None else p
+            axs[0].scatter(vox[0], vox[1], c=[p_colours[pi]], marker='o', s=20, zorder=5)
+            if show_point_idxs:
+                axs[0].annotate(str(pi), (vox[0], vox[1]),
+                    color=p_colours[pi], fontsize=8,
+                    textcoords='offset points', xytext=(5, 5), zorder=5)
+
     # Add histogram.
     if show_hist:
         axs[1].hist(data.flatten(), bins=50, color='gray')
         axs[1].ticklabel_format(axis='y', scilimits=(0, 0), style='scientific')
 
-    # Hide axis spines and ticks.
+    # Coordinate ticks.
+    x_tick_spacing = np.unique(np.diff(axs[0].get_xticks()))[0]
+    x_ticks = np.arange(0, data.shape[0], x_tick_spacing)
+    y_tick_spacing = np.unique(np.diff(axs[0].get_yticks()))[0]
+    y_ticks = np.arange(0, data.shape[1], y_tick_spacing)
+
+    if not use_image_coords and affine is not None:
+        spacing = affine_spacing(affine)
+        origin = affine_origin(affine)
+        axs[0].set_xticks(x_ticks)
+        axs[0].set_xticklabels([f'{t * spacing[0] + origin[0]:.1f}' for t in x_ticks])
+        axs[0].set_yticks(y_ticks)
+        axs[0].set_yticklabels([f'{t * spacing[1] + origin[1]:.1f}' for t in y_ticks])
+    else:
+        axs[0].set_xticks(x_ticks)
+        axs[0].set_yticks(y_ticks)
+
+    # Hide axis spines.
     for p in ['right', 'top', 'bottom', 'left']:
         axs[0].spines[p].set_visible(False)
-    axs[0].set_xticks([])
-    axs[0].set_yticks([])
 
     # Add text.
     if title is not None:
@@ -238,11 +316,20 @@ def plot_slice(
     if show:
         plt.show()
 
-    return axs[0]
+    if return_axis:
+        return axs[0]
 
+@alias_kwargs(
+    ('a', 'affine'),
+    ('i', 'idx'),
+    ('l', 'labels'),
+    ('ln', 'label_names'),
+    ('p', 'points'),
+)
 def plot_volume(
-    data: Image3D,
+    data: Image3D | None,
     affine: AffineMatrix3D | None = None,
+    ax: mpl.axes.Axes | List[mpl.axes.Axes] | None = None,
     cmap: str = 'gray',
     dose: Image3D | None = None,
     dose_alpha_min: float = 0.3,
@@ -258,13 +345,24 @@ def plot_volume(
     label_alpha: float = 0.3,
     points: Points3D | None = None,
     points_colour: str = 'yellow',
+    return_axis: bool = False,
+    show_labels: bool = True,
     show_point_idxs: bool = False,
+    show_points: bool = True,
     show_title: bool = True,
     use_image_coords: bool = False,
     view: int | list[int] | Literal['all'] = 'all',
     vmin: float | None = None,
     vmax: float | None = None,
-    ) -> np.ndarray:
+    window: Window | None = None,
+    ) -> np.ndarray | None:
+    if data is None:
+        assert labels is not None, "Labels must be provided if data is None."
+        data = np.zeros(labels.shape[-3:])
+
+    # Resolve window to vmin/vmax.
+    vmin, vmax = __resolve_window(window, vmin, vmax)
+
     # Convert inputs to numpy.
     data = to_numpy(data)
     affine = to_numpy(affine)
@@ -275,13 +373,19 @@ def plot_volume(
     # Normalise labels to batch form (B, X, Y, Z).
     if labels is not None and labels.ndim == 3:
         labels = labels[np.newaxis]
+    if labels is not None and labels.dtype != bool:
+        if labels.min() < 0 or labels.max() > 1:
+            logger.warn(f"Labels values are outside the range [0, 1]. Got min={labels.min():.3f}, max={labels.max():.3f}.")
 
     # Check for empty points array - could be filtered by the transform.
     if points is not None:
+        # Expand single points.
+        if points.ndim == 1:
+            points = points[np.newaxis, :]
         if points.shape[0] == 0:
             logger.warn("Points array is empty. No points will be plotted.")
             points = None
-            if isinstance(idx, str) and idx.startswith('points:'):
+            if isinstance(idx, str) and idx.startswith(('p:', 'point:', 'points:')):
                 idx = None
         else:
             assert points.shape[1] == 3, f"Expected points to have shape (N, 3) but got {points.shape}."
@@ -291,8 +395,14 @@ def plot_volume(
 
     palette = sns.color_palette('colorblind', 20)
 
-    fig, axs = plt.subplots(1, len(views), figsize=figsize, squeeze=False)
-    axs = axs[0]
+    if ax is not None:
+        axs = arg_to_list(ax, mpl.axes.Axes)
+        assert len(axs) == len(views), f"Expected {len(views)} axes but got {len(axs)}."
+        show = False
+    else:
+        _, axs_grid = plt.subplots(1, len(views), figsize=figsize, squeeze=False)
+        axs = list(axs_grid[0])
+        show = True
 
     for col_ax, v in zip(axs, views):
         resolved_idx = _get_view_idx(v, data.shape, affine=affine, centre_method=centre_method, idx=idx, label_names=label_names, labels=labels, points=points)
@@ -320,7 +430,7 @@ def plot_volume(
             col_ax.imshow(dose_slice.T, aspect=aspect, cmap=alpha_cmap, origin=origin_y)
 
         # Label overlays.
-        if labels is not None:
+        if show_labels and labels is not None:
             label_names_list = arg_to_list(label_names, str) if label_names is not None else None
             for j, lab in enumerate(labels):
                 label_slice = _get_view_slice(v, lab, resolved_idx)
@@ -334,7 +444,7 @@ def plot_volume(
                 col_ax.legend(fontsize='small', framealpha=0.7, handles=handles, loc='upper right')
 
         # Point overlays.
-        if points is not None:
+        if show_points and points is not None:
             view_axes = [i for i in range(3) if i != v]
             if affine is not None:
                 spacing = affine_spacing(affine)
@@ -386,5 +496,29 @@ def plot_volume(
         for p in ['right', 'top', 'bottom', 'left']:
             col_ax.spines[p].set_visible(False)
 
-    plt.tight_layout()
-    plt.show()
+    if show:
+        plt.tight_layout()
+        plt.show()
+
+    if return_axis:
+        return axs
+
+def __resolve_window(
+    window: Window | None,
+    vmin: float | None,
+    vmax: float | None,
+    ) -> tuple[float | None, float | None]:
+    if window is not None:
+        assert vmin is None, "vmin must be None if window is specified."
+        assert vmax is None, "vmax must be None if window is specified."
+    if window is None:
+        return vmin, vmax
+    if isinstance(window, str):
+        if window not in WINDOW_PRESETS:
+            raise ValueError(f"Unknown window preset '{window}'. Expected one of {list(WINDOW_PRESETS.keys())}.")
+        width, level = WINDOW_PRESETS[window]
+    else:
+        width, level = window
+    vmin = level - width / 2
+    vmax = level + width / 2
+    return vmin, vmax

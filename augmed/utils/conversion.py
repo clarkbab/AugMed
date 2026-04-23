@@ -3,7 +3,7 @@ import torch
 from typing import List, Tuple
 
 from ..typing import AffineMatrix, Image, Number, Points, TransformParams
-from .python import bubble_args
+from .args import bubble_args
 
 def to_numpy(
     data: bool | Number | str | List[bool | Number | str] | np.ndarray | torch.Tensor | torch.Size,
@@ -29,7 +29,7 @@ def to_numpy(
     # Convert data to array.
     if isinstance(data, (bool, float, int, str)):
         data = np.array([data])
-    if isinstance(data, (list, tuple)):
+    elif isinstance(data, (list, tuple)):
         data = np.array(data)
     elif isinstance(data, torch.Size):
         data = np.array(data)

@@ -537,6 +537,45 @@ def _find_module_import(
 # Collect all names used in the file body (excluding import section)
 # ---------------------------------------------------------------------------
 
+def _intermediate_init_files(from_module: str, file_path: Path) -> Set[Path]:
+    """Return ``__init__.py`` files for intermediate packages in a dotted
+    relative import.
+
+    For example, ``from .transforms.transpose import X`` in
+    ``utils/conversion.py`` traverses the ``transforms`` package.  Python
+    executes ``transforms/__init__.py`` as a side-effect, so it is an
+    implicit runtime dependency.
+
+    Only intermediate segments are returned \u2014 the final target module is
+    excluded (it is already handled by ``_resolve_module_path``).
+    """
+    dots = 0
+    for ch in from_module:
+        if ch == '.':
+            dots += 1
+        else:
+            break
+    remainder = from_module[dots:]
+    if not remainder:
+        return set()
+    parts = remainder.split('.')
+    if len(parts) <= 1:
+        return set()  # no intermediate packages
+
+    base = file_path.parent
+    for _ in range(dots - 1):
+        base = base.parent
+
+    result: Set[Path] = set()
+    current = base
+    for part in parts[:-1]:  # all segments except the final target
+        current = current / part
+        init = current / '__init__.py'
+        if init.exists():
+            result.add(init.resolve())
+    return result
+
+
 def _names_from_target(target: ast.AST) -> Set[str]:
     """Recursively extract all ``ast.Name`` ids from an assignment target
     (handles nested tuples/lists like ``for i, (m, u) in ...``)."""
@@ -698,45 +737,6 @@ def _resolve_module_path(from_module: str, file_path: Path) -> Optional[Path]:
     if py.exists():
         return py
     return None
-
-
-def _intermediate_init_files(from_module: str, file_path: Path) -> Set[Path]:
-    """Return ``__init__.py`` files for intermediate packages in a dotted
-    relative import.
-
-    For example, ``from .transforms.transpose import X`` in
-    ``utils/conversion.py`` traverses the ``transforms`` package.  Python
-    executes ``transforms/__init__.py`` as a side-effect, so it is an
-    implicit runtime dependency.
-
-    Only intermediate segments are returned \u2014 the final target module is
-    excluded (it is already handled by ``_resolve_module_path``).
-    """
-    dots = 0
-    for ch in from_module:
-        if ch == '.':
-            dots += 1
-        else:
-            break
-    remainder = from_module[dots:]
-    if not remainder:
-        return set()
-    parts = remainder.split('.')
-    if len(parts) <= 1:
-        return set()  # no intermediate packages
-
-    base = file_path.parent
-    for _ in range(dots - 1):
-        base = base.parent
-
-    result: Set[Path] = set()
-    current = base
-    for part in parts[:-1]:  # all segments except the final target
-        current = current / part
-        init = current / '__init__.py'
-        if init.exists():
-            result.add(init.resolve())
-    return result
 
 
 def _would_cause_circular_import(file_path: Path, target_module: str) -> bool:

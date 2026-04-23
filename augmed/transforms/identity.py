@@ -5,7 +5,7 @@ from typing import List
 from ..typing import AffineMatrix, Image, Indices, Points
 from ..utils.args import arg_to_list
 from ..utils.conversion import to_return_format, to_tensor
-from ..utils.misc import get_group_device
+from ..utils.python import get_group_device
 from .transform import Transform
 
 class Identity(Transform):

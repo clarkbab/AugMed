@@ -9,7 +9,7 @@ from ...utils.args import arg_to_list, expand_range_arg
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
 from ...utils.geometry import affine_origin, affine_spacing, create_affine
 from ...utils.logging import logger
-from ...utils.misc import get_group_device
+from ...utils.python import get_group_device
 from ..identity import Identity
 from .spatial import RandomSpatialTransform, SpatialTransform
 

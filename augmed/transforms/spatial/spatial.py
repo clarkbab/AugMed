@@ -6,7 +6,7 @@ from ...typing import AffineMatrix, Image, PointsTensor
 from ...utils.args import alias_kwargs, arg_to_list
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
 from ...utils.grid import grid_points, grid_sample
-from ...utils.misc import get_group_device
+from ...utils.python import get_group_device
 from ..transform import RandomTransform, Transform
 
 # These transforms move objects around in the world.
@@ -24,9 +24,9 @@ class SpatialTransform(Transform):
         ) -> PointsTensor:
         raise ValueError("Subclasses of 'SpatialTransform' must implement 'backward_transform_points' method.")
 
-    @alias_kwargs([
+    @alias_kwargs(
         ('a', 'affine'),
-    ])
+    )
     def transform_images(
         self,
         image: Image | List[Image],

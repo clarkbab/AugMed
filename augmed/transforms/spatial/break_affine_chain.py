@@ -7,7 +7,7 @@ from typing import List
 from ...typing import Indices, Points, PointsTensor
 from ...utils.args import arg_to_list
 from ...utils.conversion import to_return_format, to_tensor
-from ...utils.misc import get_group_device
+from ...utils.python import get_group_device
 from .spatial import SpatialTransform
 
 # This is really just a utility class for breaking affine chains in the pipeline

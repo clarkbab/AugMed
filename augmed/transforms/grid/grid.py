@@ -6,7 +6,7 @@ from ...typing import AffineMatrix, Image, SamplingGridTensor
 from ...utils.args import alias_kwargs, arg_to_list
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
 from ...utils.grid import grid_points, grid_sample
-from ...utils.misc import get_group_device
+from ...utils.python import get_group_device
 from ..transform import RandomTransform, Transform
 
 # These transforms change the position of the sampling grid.
@@ -25,10 +25,10 @@ class GridTransform(Transform):
         raise ValueError("Subclasses of 'GridTransform' must implement 'transform_grid' method.")
 
     # Just removes voxels outside the transformed FOV.
-    @alias_kwargs([
+    @alias_kwargs(
         ('a', 'affine'),
         ('rf', 'return_affine'),
-    ])
+    )
     def transform_images(
         self,
         image: Image | List[Image],

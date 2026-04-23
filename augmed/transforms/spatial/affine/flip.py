@@ -11,10 +11,10 @@ from ...identity import Identity
 from .affine import Affine, RandomAffine
         
 class Flip(Affine):
-    @alias_kwargs([
+    @alias_kwargs(
         ('f', 'flips'),
         ('fc', 'flip_centre'),
-    ])
+    )
     def __init__(
         self,
         flips: bool | Tuple[bool] | np.ndarray | torch.Tensor,

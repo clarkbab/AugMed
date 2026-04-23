@@ -12,7 +12,7 @@ from ..utils.conversion import to_return_format, to_tensor, to_tuple
 from ..utils.geometry import fov
 from ..utils.grid import grid_points, grid_sample
 from ..utils.logging import logger
-from ..utils.misc import get_group_device
+from ..utils.python import get_group_device
 from .grid import GridTransform
 from .identity import Identity
 from .intensity import IntensityTransform
@@ -190,9 +190,9 @@ class FrozenPipeline(Transform):
             transforms=self.__transforms,
         )
 
-    @alias_kwargs([
+    @alias_kwargs(
         ('a', 'affine'),
-    ])
+    )
     def transform_images(
         self,
         image: Image | List[Image],

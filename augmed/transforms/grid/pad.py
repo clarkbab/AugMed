@@ -8,17 +8,17 @@ from ...typing import AffineMatrix, Indices, Number, Points, SamplingGridTensor,
 from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
 from ...utils.geometry import affine_origin, affine_spacing, create_affine, fov, fov_centre, to_world_coords
-from ...utils.misc import get_group_device
+from ...utils.python import get_group_device
 from ..identity import Identity
 from .grid import GridTransform, RandomGridTransform
 
 class Pad(GridTransform):
-    @alias_kwargs([
+    @alias_kwargs(
         ('pa', 'add'),
         ('pc', 'centre'),
         ('pco', 'centre_offset'),
         ('pm', 'margin'),
-    ])
+    )
     def __init__(
         self,
         add: Number | Tuple[Number, ...] | None = None,
@@ -177,13 +177,13 @@ class Pad(GridTransform):
         return results
 
 class RandomPad(RandomGridTransform):
-    @alias_kwargs([
+    @alias_kwargs(
         ('a', 'add'),
         ('pc', 'centre'),
         ('pco', 'centre_offset'),
         ('pm', 'margin'),
         ('s', 'symmetric'),
-    ])
+    )
     def __init__(
         self,
         # How many ways are there to define a pad?

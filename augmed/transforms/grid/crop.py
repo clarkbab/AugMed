@@ -8,17 +8,17 @@ from ...typing import AffineMatrix, Indices, Number, Point, Points, SamplingGrid
 from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
 from ...utils.geometry import affine_origin, affine_spacing, create_affine, fov, fov_centre, to_world_coords
-from ...utils.misc import get_group_device
+from ...utils.python import get_group_device
 from ..identity import Identity
 from .grid import GridTransform, RandomGridTransform
 
 class Crop(GridTransform):
-    @alias_kwargs([
+    @alias_kwargs(
         ('cc', 'centre'),
         ('cco', 'centre_offset'),
         ('cm', 'margin'),
         ('cr', 'remove'),
-    ])
+    )
     def __init__(
         self,
         centre: Point | Literal['image-centre'] = 'image-centre',
@@ -184,13 +184,13 @@ class Crop(GridTransform):
         return results
 
 class RandomCrop(RandomGridTransform):
-    @alias_kwargs([
+    @alias_kwargs(
         ('cc', 'centre'),
         ('cco', 'centre_offset'),
         ('cm', 'margin'),
         ('cr', 'remove'),
         ('s', 'symmetric'),
-    ])
+    )
     def __init__(
         self,
         # How many ways are there to define a crop?
