@@ -3,17 +3,6 @@ from __future__ import annotations
 from ...typing import Number
 from .intensity import IntensityTransform, RandomIntensityTransform
 
-class RandomNormalise(RandomIntensityTransform):
-    def __init__(
-        self,
-        **kwargs,
-        ) -> None:
-        super().__init__(**kwargs)
-        # Randomise mean/std using some range.
-
-    def freeze(self) -> Normalise:
-        pass
-
 # How do we incorporate different normalisation strategies?
 # - Min/max normalisation.
 # - Z-score normalisation.
@@ -80,12 +69,12 @@ class Normalise(IntensityTransform):
     # Otherwise, we'd have to perform parts of the pipeline to calculate intermediate intensities and
     # then perform intensity normalisation before performing the next part of the pipeline - multiple resamples?
     # E.g. Translation -> Rotation -> Resize(2x downsample) -> Norm -> Elastic. If we're normalising mid-pipeline, 
-    # we need to resolve the intensity values after the resize transform, which means 'backward_transform_points'
-    # for Translation -> Rotation -> Resize, then perform Norm transform, then backward_transform_points for Elastic.
+    # we need to resolve the intensity values after the resize transform, which means 'back_transform_points'
+    # for Translation -> Rotation -> Resize, then perform Norm transform, then back_transform_points for Elastic.
     # 2x resampling.
     # Alternatively, we could push the Norm transform to the front (or make this an overridable default):
     # Norm -> Translation -> Rotation -> Resize -> Elastic. In this format, we can perform the intensity normalisation
-    # which doesn't involve resampling, followed by a single resample using 'backward_transform_points' of the 
+    # which doesn't involve resampling, followed by a single resample using 'back_transform_points' of the 
     # remaining spatial transforms.
     # Now we run into the issue of spatial transforms that deform the intensity histogram, i.e. non-rigid transforms.
     # Obvious example is elastic deformation, which could expand bony regions and increase the high-end of the histogram.
@@ -117,3 +106,15 @@ class Normalise(IntensityTransform):
     # gaussian smoothing applied over the image. We can't forward propagate stats here.
     # 
 
+
+
+class RandomNormalise(RandomIntensityTransform):
+    def __init__(
+        self,
+        **kwargs,
+        ) -> None:
+        super().__init__(**kwargs)
+        # Randomise mean/std using some range.
+
+    def freeze(self) -> Normalise:
+        pass

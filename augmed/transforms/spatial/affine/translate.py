@@ -5,74 +5,111 @@ import torch
 import torch
 from typing import Tuple
 
-from ....typing import Number
-from ....utils.args import expand_range_arg
+from ....typing import Number, TransformParams
+from ....utils.args import alias_kwargs
 from ....utils.conversion import to_tensor, to_tuple
+from ....utils.python import get_private_attr
 from ...identity import Identity
 from .affine import Affine, RandomAffine
 
 class Translate(Affine):
+    @alias_kwargs(
+        ('t', 'translation'),
+    )
     def __init__(
         self,
-        translation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor,
+        translation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = None,
+        translation_p: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = None,
         **kwargs,
         ) -> None:
         super().__init__(
             rotation=None,
             scaling=None,
             translation=translation,
+            translation_p=translation_p,
             **kwargs,
         )
-        super().set_params(
-            self.__class__.__name__,
-            backward_matrix=self._backward_translation_matrix,
-            matrix=self._translation_matrix,
-            translation=self._translation,
+
+    @property
+    def params(self) -> TransformParams:
+        return super().super_params(
+            backward_translation_matrix=self.__backward_translation_matrix,
+            translation=to_tuple(self.__translation) if self.__translation is not None else None,
+            translation_matrix=self.__translation_matrix,
+            translation_p=to_tuple(self.__translation_p) if self.__translation_p is not None else None,
         )
 
     def __str__(self) -> str:
+        return self.to_str()
+
+    def to_str(
+        self,
+        subtransform: bool = False,
+        ) -> str:
         return super().super_str(
             self.__class__.__name__,
-            translation=to_tuple(self._translation, decimals=3),
+            subtransform=subtransform,
+            translation=to_tuple(self.__translation, dp=3) if self.__translation is not None else None,
+            translation_p=to_tuple(self.__translation_p, dp=3) if self.__translation_p is not None else None,
         )
 
 class RandomTranslate(RandomAffine):
+    @alias_kwargs(
+        ('t', 'translation'),
+    ) 
     def __init__(
         self, 
-        translation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = 20.0,
+        translation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = None,
+        translation_p: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = None,
         **kwargs,
         ) -> None:
         super().__init__(
             rotation=None,
             scaling=None,
             translation=translation,
+            translation_p=translation_p,
             **kwargs,
         )
-        super().set_params(
-            self.__class__.__name__,
-            translation=self._translation,
-        )
 
-    def freeze(self) -> Translate:
-        # Expand the range args.
-        # We do this now because 'set_dim' could be called after RandomTranslate.__init__.
-        translation_range = expand_range_arg(self._translation, dim=self._dim, negate_lower=True)
-        assert len(translation_range) == 2 * self._dim, f"Expected 'translation' of length {2 * self._dim}, got {len(translation_range)}."
-        translation_range = to_tensor(translation_range).reshape(self._dim, 2)
+    def freeze(self) -> Translate | Identity:
+        should_apply = self.__rng.random(1) < self.__p
+        if not should_apply:
+            return Identity(dim=self.__dim)
 
         # Draw the translation parameters.
-        should_apply = self._rng.random(1) < self._p
-        if not should_apply:
-            return Identity(dim=self._dim)
-        draw = to_tensor(self._rng.random(self._dim))
-        trans_draw = draw * (translation_range[:, 1] - translation_range[:, 0]) + translation_range[:, 0]
+        trans_draw = trans_p_draw = None
+        if self.__translation_range is not None:
+            draw = to_tensor(self.__rng.random(self.__dim))
+            trans_draw = draw * (self.__translation_range[1] - self.__translation_range[0]) + self.__translation_range[0]
+        if self.__translation_p_range is not None:
+            draw = to_tensor(self.__rng.random(self.__dim))
+            trans_p_draw = draw * (self.__translation_p_range[1] - self.__translation_p_range[0]) + self.__translation_p_range[0]
+
         params = dict(
             translation=trans_draw,
+            translation_p=trans_p_draw,
         )
         return super().super_freeze(Translate, params)
 
+    @property
+    def params(self) -> TransformParams:
+        translation_range = get_private_attr(self, '__translation_range')
+        return super().super_params(
+            translation=to_tuple(translation_range.T.flatten()) if translation_range is not None else None,
+            translation_p=to_tuple(get_private_attr(self, '__translation_p_range').T.flatten()) if get_private_attr(self, '__translation_p_range') is not None else None,
+        )
+
     def __str__(self) -> str:
+        return self.to_str()
+
+    def to_str(
+        self,
+        subtransform: bool = False,
+        ) -> str:
         return super().super_str(
             self.__class__.__name__,
-            translation=self._translation,
+            subtransform=subtransform,
+            translation=to_tuple(get_private_attr(self, '__translation_range').T.flatten(), dp=3) if get_private_attr(self, '__translation_range') is not None else None,
+            translation_p=to_tuple(get_private_attr(self, '__translation_p_range').T.flatten(), dp=3) if get_private_attr(self, '__translation_p_range') is not None else None,
         )
+

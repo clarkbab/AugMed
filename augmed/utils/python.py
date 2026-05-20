@@ -19,6 +19,11 @@ def get_group_device(
 
     return torch.device('cpu')
 
+def get_private_attr(obj, attr_name, *args):
+    if attr_name.startswith('__'):
+        attr_name = f"_{obj.__class__.__name__}{attr_name}"
+    return getattr(obj, attr_name, *args)
+
 def is_generic(t: Any) -> bool:
     return get_origin(t) is not None
 
@@ -76,6 +81,11 @@ def isinstance_generic(
             
     return True
 
+def set_private_attr(obj, attr_name, value):
+    if attr_name.startswith('__'):
+        attr_name = f"_{obj.__class__.__name__}{attr_name}"
+    setattr(obj, attr_name, value)
+
 def version(
     gte: str | None = None,
     ) -> Tuple[int, int, int] | bool:
@@ -94,3 +104,6 @@ def version(
             return False
     version = (info.major, info.minor, info.micro)
     return version
+
+def wrap_quotes(s: str) -> str:
+    return f"'{s}'"

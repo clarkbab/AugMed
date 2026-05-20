@@ -5,84 +5,119 @@ import torch
 import torch
 from typing import Literal, Tuple
 
-from ....typing import Number, Point
-from ....utils.args import expand_range_arg
+from ....typing import Number, Point, TransformParams
+from ....utils.args import alias_kwargs
 from ....utils.conversion import to_tensor, to_tuple
+from ....utils.python import get_private_attr, wrap_quotes
 from ...identity import Identity
-from .affine import Affine, RandomAffine
+from .affine import Affine, DEFAULT_SCALING_RANGE, RandomAffine
 
 class Scale(Affine):
+    @alias_kwargs(
+        ('c', 'centre'),
+        ('co', 'centre_offset'),
+        ('s', 'scaling'),
+    )
     def __init__(
         self,
-        scaling: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor,
-        scaling_centre: Point | Literal['image-centre'] = 'image-centre',
+        scaling: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 1.0,
+        centre: Point | Literal['image-centre'] = 'image-centre',
+        centre_offset: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 0.0,
         **kwargs,
         ) -> None:
         super().__init__(
             rotation=None,
             scaling=scaling,
-            scaling_centre=scaling_centre,
+            scaling_centre=centre,
+            scaling_centre_offset=centre_offset,
             translation=None,
             **kwargs,
         )
-        super().set_params(
-            self.__class__.__name__,
-            backward_matrix=self._backward_scaling_matrix,
-            matrix=self._scaling_matrix,
-            scaling=self._scaling,
-            scaling_centre=self._scaling_centre,
+
+    @property
+    def params(self) -> TransformParams:
+        return super().super_params(
+            backward_scaling_matrix=get_private_attr(self, '__backward_scaling_matrix'),
+            scaling=to_tuple(get_private_attr(self, '__scaling')) if get_private_attr(self, '__scaling') is not None else None,
+            scaling_centre=get_private_attr(self, '__scaling_centre'),
+            scaling_centre_offset=to_tuple(get_private_attr(self, '__scaling_centre_offset')),
+            scaling_matrix=get_private_attr(self, '__scaling_matrix'),
         )
 
     def __str__(self) -> str:
+        return self.to_str()
+
+    def to_str(
+        self,
+        subtransform: bool = False,
+        ) -> str:
         return super().super_str(
             self.__class__.__name__,
-            scaling=to_tuple(self._scaling, decimals=3),
-            scaling_centre=to_tuple(self._scaling_centre, decimals=3) if self._scaling_centre != 'image-centre' else "\"image-centre\"",
+            scaling=to_tuple(self.__scaling, dp=3),
+            centre=to_tuple(self.__scaling_centre, dp=3) if self.__scaling_centre != 'image-centre' else wrap_quotes('image-centre'),
+            centre_offset=to_tuple(self.__scaling_centre_offset, dp=3),
+            subtransform=subtransform,
         )
 
 class RandomScale(RandomAffine):
+    @alias_kwargs(
+        ('s', 'scaling'),
+        ('c', 'centre'),
+        ('co', 'centre_offset'),
+    )
     def __init__(
         self, 
-        scaling: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = (0.8, 1.2),
-        scaling_centre: Point | Literal['image-centre'] = 'image-centre',
+        scaling: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = DEFAULT_SCALING_RANGE,
+        centre: Point | Literal['image-centre'] = 'image-centre',
+        centre_offset: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 0.0,
         **kwargs,
         ) -> None:
         super().__init__(
             rotation=None,
             rotation_centre=None,
             scaling=scaling,
-            scaling_centre=scaling_centre,
+            scaling_centre=centre,
+            scaling_centre_offset=centre_offset,
             translation=None,
             **kwargs,
         )
-        super().set_params(
-            self.__class__.__name__,
-            scaling=self._scaling,
-            scaling_centre=self._scaling_centre,
-        )
 
-    def freeze(self) -> Scale:
-        # Expand the range args.
-        # We do this now because 'set_dim' could be called after RandomScale.__init__.
-        scaling_range = expand_range_arg(self._scaling, dim=self._dim, negate_lower=False)
-        assert len(scaling_range) == 2 * self._dim, f"Expected 'scaling' of length {2 * self._dim}, got {len(scaling_range)}."
-        scaling_range = to_tensor(scaling_range).reshape(self._dim, 2)
-
-        # Draw the scaling parameters.
-        should_apply = self._rng.random(1) < self._p
+    def freeze(self) -> Scale | Identity:
+        scaling_range = get_private_attr(self, '__scaling_range')
+        should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
-            return Identity(dim=self._dim)
-        draw = to_tensor(self._rng.random(self._dim))
-        scale_draw = draw * (scaling_range[:, 1] - scaling_range[:, 0]) + scaling_range[:, 0]
+            return Identity(dim=self.__dim)
+
+        draw = to_tensor(self.__rng.random(self.__dim))
+        scale_draw = draw * (scaling_range[1] - scaling_range[0]) + scaling_range[0]
         params = dict(
+            centre=self.__scaling_centre,
+            centre_offset=self.__scaling_centre_offset,
             scaling=scale_draw,
-            scaling_centre=self._scaling_centre,
         )
         return super().super_freeze(Scale, params)
 
+    @property
+    def params(self) -> TransformParams:
+        scaling_range = get_private_attr(self, '__scaling_range')
+        scaling_centre_offset_range = get_private_attr(self, '__scaling_centre_offset_range')
+        return super().super_params(
+            scaling=to_tuple(scaling_range.T.flatten()) if scaling_range is not None else None,
+            scaling_centre=get_private_attr(self, '__scaling_centre'),
+            scaling_centre_offset=to_tuple(scaling_centre_offset_range.T.flatten()),
+        )
+
     def __str__(self) -> str:
+        return self.to_str()
+
+    def to_str(
+        self,
+        subtransform: bool = False,
+        ) -> str:
         return super().super_str(
             self.__class__.__name__,
-            scaling=self._scaling,
-            scaling_centre=self._scaling_centre,
+            scaling=to_tuple(self.__scaling, dp=3),
+            centre=to_tuple(self.__scaling_centre, dp=3) if self.__scaling_centre != 'image-centre' else wrap_quotes('image-centre'),
+            centre_offset=to_tuple(self.__scaling_centre_offset, dp=3),
+            subtransform=subtransform,
         )

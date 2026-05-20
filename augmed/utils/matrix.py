@@ -5,7 +5,7 @@ from typing import Tuple
 from ..typing import Number, SpatialDim
 from .args import arg_to_list
 from .conversion import to_tensor
-from .geometry import create_eye
+from .geometry import create_affine
 
 def create_rotation(
     rotation: Number | Tuple[Number] | np.ndarray | torch.Tensor,   # In radians.
@@ -16,7 +16,7 @@ def create_rotation(
     if dim is None:
         assert isinstance(rotation, (tuple, list, np.ndarray, torch.Tensor)), f"'rotation' must be a tuple, list, numpy array, or torch tensor when 'dim' is None. Got {type(rotation)}."
         dim = len(rotation)
-    rotation = arg_to_list(rotation, (int, float), broadcast=dim, iter_types=(np.ndarray, torch.Tensor))
+    rotation = arg_to_list(rotation, (int, float), broadcast=dim)
     rotation = to_tensor(rotation, device=device, dtype=dtype)
     if dim == 2:
         # 2D rotation matrix.
@@ -58,9 +58,9 @@ def create_scaling(
     if dim is None:
         assert isinstance(scaling, (tuple, list, np.ndarray, torch.Tensor)), f"'scaling' must be a tuple, list, numpy array, or torch tensor when 'dim' is None. Got {type(scaling)}."
         dim = len(scaling)
-    scaling = arg_to_list(scaling, (int, float), broadcast=dim, iter_types=(np.ndarray, torch.Tensor))
+    scaling = arg_to_list(scaling, (int, float), broadcast=dim)
     scaling = to_tensor(scaling, device=device, dtype=dtype)
-    matrix = create_eye(dim, device=device, dtype=dtype)
+    matrix = create_affine(device=device, dim=dim)
     for i, s in enumerate(scaling):
         matrix[i, i] = s
     return matrix
@@ -74,8 +74,8 @@ def create_translation(
     if dim is None:
         assert isinstance(translation, (tuple, list, np.ndarray, torch.Tensor)), f"'translation' must be a tuple, list, numpy array, or torch tensor when 'dim' is None. Got {type(translation)}."
         dim = len(translation)
-    translation = arg_to_list(translation, (int, float), broadcast=dim, iter_types=(np.ndarray, torch.Tensor))
+    translation = arg_to_list(translation, (int, float), broadcast=dim)
     translation = to_tensor(translation, device=device, dtype=dtype)
-    matrix = create_eye(dim, device=device, dtype=dtype)
+    matrix = create_affine(device=device, dim=dim)
     matrix[:dim, dim] = translation
     return matrix

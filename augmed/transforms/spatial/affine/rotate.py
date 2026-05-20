@@ -5,84 +5,119 @@ import torch
 import torch
 from typing import Literal, Tuple
 
-from ....typing import Number, Point
-from ....utils.args import expand_range_arg
+from ....typing import Number, Point, TransformParams
+from ....utils.args import alias_kwargs
 from ....utils.conversion import to_tensor, to_tuple
+from ....utils.python import get_private_attr, wrap_quotes
 from ...identity import Identity
-from .affine import Affine, RandomAffine
+from .affine import Affine, DEFAULT_ROTATION_RANGE, RandomAffine
 
 class Rotate(Affine):
+    @alias_kwargs(
+        ('r', 'rotation'),
+        ('c', 'centre'),
+        ('co', 'centre_offset'),
+    )
     def __init__(
         self,
-        rotation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor,
-        rotation_centre: Point | Literal['image-centre'] = 'image-centre',
+        rotation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 0.0,
+        centre: Point | Literal['image-centre'] = 'image-centre',
+        centre_offset: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 0.0,
         **kwargs,
         ) -> None:
         super().__init__(
             rotation=rotation,
-            rotation_centre=rotation_centre,
+            rotation_centre=centre,
+            rotation_centre_offset=centre_offset,
             scaling=None,
             translation=None,
             **kwargs,
         )
-        super().set_params(
-            self.__class__.__name__,
-            backward_matrix=self._backward_rotation_matrix,
-            matrix=self._rotation_matrix,
-            rotation=self._rotation,
-            rotation_centre=self._rotation_centre,
-            rotation_rad=self._rotation_rad,
+
+    @property
+    def params(self) -> TransformParams:
+        return super().super_params(
+            backward_rotation_matrix=get_private_attr(self, '__backward_rotation_matrix'),
+            rotation=to_tuple(get_private_attr(self, '__rotation')) if get_private_attr(self, '__rotation') is not None else None,
+            rotation_centre=get_private_attr(self, '__rotation_centre'),
+            rotation_centre_offset=to_tuple(get_private_attr(self, '__rotation_centre_offset')),
+            rotation_matrix=get_private_attr(self, '__rotation_matrix'),
+            rotation_rad=to_tuple(get_private_attr(self, '__rotation_rad')) if get_private_attr(self, '__rotation_rad') is not None else None,
         )
 
     def __str__(self) -> str:
+        return self.to_str()
+
+    def to_str(
+        self,
+        subtransform: bool = False,
+        ) -> str:
         return super().super_str(
             self.__class__.__name__,
-            rotation=to_tuple(self._rotation, decimals=3),
-            rotation_centre=to_tuple(self._rotation_centre, decimals=3) if self._rotation_centre != 'image-centre' else "\"image-centre\"",
+            centre=to_tuple(self.__centre, dp=3) if self.__centre != 'image-centre' else wrap_quotes('image-centre'),
+            centre_offset=to_tuple(self.__centre_offset, dp=3),
+            rotation=to_tuple(self.__rotation, dp=3),
+            subtransform=subtransform,
         )
 
 class RandomRotate(RandomAffine):
+    @alias_kwargs(
+        ('c', 'centre'),
+        ('co', 'centre_offset'),
+        ('r', 'rotation'),
+    )
     def __init__(
         self, 
-        rotation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = 15.0,
-        rotation_centre: Point | Literal['image-centre'] = 'image-centre',
+        rotation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = DEFAULT_ROTATION_RANGE,
+        centre: Point | Literal['image-centre'] = 'image-centre',
+        centre_offset: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 0.0,
         **kwargs,
         ) -> None:
         super().__init__(
             rotation=rotation,
-            rotation_centre=rotation_centre,
+            rotation_centre=centre,
+            rotation_centre_offset=centre_offset,
             scaling=None,
             translation=None,
             **kwargs,
         )
-        super().set_params(
-            self.__class__.__name__,
-            rotation=self._rotation,
-            rotation_centre=self._rotation_centre,
-        )
 
-    def freeze(self) -> Rotate:
-        # Expand the range args.
-        # We do this now because 'set_dim' could be called after RandomRotate.__init__.
-        rotation_range = expand_range_arg(self._rotation, dim=self._dim, negate_lower=True)
-        assert len(rotation_range) == 2 * self._dim, f"Expected 'rotation' of length {2 * self._dim}, got {len(rotation_range)}."
-        rotation_range = to_tensor(rotation_range).reshape(self._dim, 2)
-
-        # Draw the rotation parameters.
-        should_apply = self._rng.random(1) < self._p
+    def freeze(self) -> Rotate | Identity:
+        rotation_range = get_private_attr(self, '__rotation_range')
+        should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
-            return Identity(dim=self._dim)
-        draw = to_tensor(self._rng.random(self._dim))
-        rot_draw = draw * (rotation_range[:, 1] - rotation_range[:, 0]) + rotation_range[:, 0]
+            return Identity(dim=self.__dim)
+
+        draw = to_tensor(self.__rng.random(self.__dim))
+        rot_draw = draw * (rotation_range[1] - rotation_range[0]) + rotation_range[0]
         params = dict(
+            centre=self.__centre,
+            centre_offset=self.__centre_offset,
             rotation=rot_draw,
-            rotation_centre=self._rotation_centre,
         )
         return super().super_freeze(Rotate, params)
 
+    @property
+    def params(self) -> TransformParams:
+        rotation_range = get_private_attr(self, '__rotation_range')
+        rotation_centre_offset_range = get_private_attr(self, '__rotation_centre_offset_range')
+        return super().super_params(
+            rotation=to_tuple(rotation_range.T.flatten()) if rotation_range is not None else None,
+            rotation_centre=get_private_attr(self, '__rotation_centre'),
+            rotation_centre_offset=to_tuple(rotation_centre_offset_range.T.flatten()),
+        )
+
     def __str__(self) -> str:
+        return self.to_str()
+
+    def to_str(
+        self,
+        subtransform: bool = False,
+        ) -> str:
         return super().super_str(
             self.__class__.__name__,
-            rotation=self._rotation,
-            rotation_centre=self._rotation_centre,
+            centre=to_tuple(self.__rotation_centre, dp=3) if self.__rotation_centre != 'image-centre' else wrap_quotes('image-centre'),
+            centre_offset=to_tuple(self.__rotation_centre_offset, dp=3),
+            rotation=to_tuple(self.__rotation, dp=3),
+            subtransform=subtransform,
         )

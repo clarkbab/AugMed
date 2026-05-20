@@ -1,11 +1,13 @@
 import numpy as np
 import torch
-from typing import List
+from typing import List, Tuple
 
-from ...typing import AffineMatrix, Image, ImageTensor, Indices, Points
+from ...typing import AffineMatrix, BatchChannelImage, BatchImage, BatchLabelImage, ChannelImage, Image, ImageTensor, Indices, LabelImage, Points, SamplingGridTensor
 from ...utils.args import alias_kwargs, arg_to_list
+from ...utils.assertions import assert_image_shapes, assert_image_sizes, assert_points_shapes
 from ...utils.conversion import to_return_format, to_tensor
-from ...utils.python import get_group_device
+from ...utils.geometry import spatial_size
+from ...utils.python import get_group_device, get_private_attr
 from ..transform import RandomTransform, Transform
 
 # These transforms change pixel/voxel intensities.
@@ -17,38 +19,44 @@ class IntensityTransform(Transform):
 
     @alias_kwargs(
         ('a', 'affine'),
+        ('rg', 'return_grid'),
+        ('rs', 'return_single'),
     )
     def transform_images(
         self,
-        image: Image | List[Image],
+        images: Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage],
         affine: AffineMatrix | None = None,
-        return_affine: bool = False,
-        ) -> Image | List[Image | AffineMatrix]:
-        images, image_was_single = arg_to_list(image, (np.ndarray, torch.Tensor), return_expanded=True)
-        device = get_group_device(images, device=self._device)
+        return_grid: bool = False,
+        return_single: bool = True,
+        **kwargs,   # Allows them to pass kwargs that work for other transforms, e.g. 'fill'.
+        ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | Tuple[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | AffineMatrix | SamplingGridTensor]:
+        assert_image_shapes(images, self.__dim)
+        assert_image_sizes(images, self.__dim)
+        images, images_was_single = arg_to_list(images, (np.ndarray, torch.Tensor), return_matched=True)
+        device = get_group_device(images, device=get_private_attr(self, '__device'))
         return_types = [type(i) for i in images]
         images = [to_tensor(i, device=device) for i in images]
 
         # Check image n_dims, and spatial sizes.
+        # TODO: Extract this to a utility for all 'transform_images' methods.
         for i, img in enumerate(images):
             n_dims = len(img.shape)
-            possible_dims = list(range(self._dim, self._dim + 3))   # E.g. for 3D, possible dims are 3-5 (3D spatial, optional batch/channel).
-            assert n_dims in possible_dims, f"Expected {self._dim}-{self._dim + 2}D image ({self._dim}D spatial, optional batch/channel), got {n_dims}D for image {i}."
-            assert img.shape[-self._dim:] == images[0].shape[-self._dim:], f"All images must have the same spatial size. Expected {tuple(images[0].shape[-self._dim:])}, got {tuple(img.shape[-self._dim:])} for image {i}."
+            possible_dims = list(range(get_private_attr(self, '__dim'), get_private_attr(self, '__dim') + 3))   # E.g. for 3D, possible dims are 3-5 (3D spatial, optional batch/channel).
+            assert n_dims in possible_dims, f"Expected {get_private_attr(self, '__dim')}-{get_private_attr(self, '__dim') + 2}D image ({get_private_attr(self, '__dim')}D spatial, optional batch/channel), got {n_dims}D for image {i}. Set 'dim' param if {get_private_attr(self, '__dim')}D spatial is not correct."
+            assert spatial_size(img, get_private_attr(self, '__dim')) == spatial_size(images[0], get_private_attr(self, '__dim')), f"All images must have the same spatial size. Expected {tuple(spatial_size(images[0], get_private_attr(self, '__dim')))}, got {tuple(spatial_size(img, get_private_attr(self, '__dim')))} for image {i}."
 
         # Transform images.
         image_ts = []
-        for image, rt in zip(images, return_types):
-            image_t = self.transform_intensity(image)
+        for i in images:
+            image_t = self.transform_intensity(i)
             image_ts.append(image_t)
 
         # Convert to return format.
         other_data = []
-        if return_affine:
-            other_data.append(affine_out)
-        results = to_return_format(image_ts, other_data=other_data, return_single=image_was_single, return_types=return_types)
-
-        return results
+        if return_grid:
+            grid_t = (spatial_size(image_t, get_private_attr(self, '__dim')), affine)
+            other_data.append(grid_t)
+        return to_return_format(image_ts, other_data=other_data, return_single=return_single and images_was_single, return_types=return_types)
 
     def transform_intensity(
         self,
@@ -57,25 +65,33 @@ class IntensityTransform(Transform):
         ) -> ImageTensor:
         raise ValueError("Subclasses of 'IntensityTransform' must implement 'transform_intensity' method.")
 
+    @alias_kwargs(
+        ('a', 'affine'),
+        ('fo', 'filter_offgrid'),
+        ('rf', 'return_filtered'),
+        ('rs', 'return_single'),
+        ('s', 'size'),
+    )
     def transform_points(
         self,
         points: Points | List[Points],
-        filter_offgrid: bool = True,
+        filter_offgrid: bool | None = None,
         return_filtered: bool = False,
+        return_single: bool = True,
         **kwargs,
         ) -> Points | List[Points | Indices | List[Indices]]:
-        # Add indices to support the API.
-        pointses, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_expanded=True)
-        device = get_group_device(pointses, device=self._device)
-        return_types = [type(p) for p in pointses]
-        pointses = [to_tensor(p, device=device) for p in pointses]
+        assert_points_shapes(points, self.__dim)
+        points, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_matched=True)
+        device = get_group_device(points, device=get_private_attr(self, '__device'))
+        return_types = [type(p) for p in points]
+        points = [to_tensor(p, device=device) for p in points]
+        filter_offgrid = filter_offgrid if filter_offgrid is not None else get_private_attr(self, '__filter_offgrid')
         other_data = []
         if filter_offgrid and return_filtered:
-            indiceses = [to_tensor([], device=device, dtype=torch.int32) for _ in pointses]
+            indiceses = [to_tensor([], device=device, dtype=torch.int32) for _ in points]
             indiceses = to_return_format(indiceses, return_single=False, return_types=return_types)
             other_data.append(indiceses)
-        results = to_return_format(pointses, other_data=other_data, return_single=points_was_single, return_types=return_types)
-        return results
+        return to_return_format(points, other_data=other_data, return_single=return_single and points_was_single, return_types=return_types)
 
 class RandomIntensityTransform(RandomTransform, IntensityTransform):
     def __init__(

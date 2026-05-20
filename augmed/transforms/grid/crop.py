@@ -4,20 +4,21 @@ import numpy as np
 import torch
 from typing import List, Literal, Tuple
 
-from ...typing import AffineMatrix, Indices, Number, Point, Points, SamplingGridTensor, Size
+from ...typing import AffineMatrix, Indices, Number, Point, Points, SamplingGridTensor, Size, SpatialDim, TransformParams
 from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg
+from ...utils.assertions import assert_points_shapes
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
-from ...utils.geometry import affine_origin, affine_spacing, create_affine, fov, fov_centre, to_world_coords
-from ...utils.python import get_group_device
+from ...utils.geometry import affine_spacing, create_affine, fov, fov_centre, to_world_coords
+from ...utils.python import get_group_device, wrap_quotes
 from ..identity import Identity
 from .grid import GridTransform, RandomGridTransform
 
 class Crop(GridTransform):
     @alias_kwargs(
-        ('cc', 'centre'),
-        ('cco', 'centre_offset'),
-        ('cm', 'margin'),
-        ('cr', 'remove'),
+        ('c', 'centre'),
+        ('co', 'centre_offset'),
+        ('m', 'margin'),
+        ('r', 'remove'),
     )
     def __init__(
         self,
@@ -30,35 +31,43 @@ class Crop(GridTransform):
         super().__init__(**kwargs)
         assert remove is not None or (centre is not None and margin is not None), "Must specify either 'remove' or both 'centre' and 'margin'."
         if remove is not None:
-            remove = expand_range_arg(remove, dim=self._dim)
-            self.__remove = to_tensor(remove).reshape(self._dim, 2)
+            remove = expand_range_arg(remove, dim=self.__dim)
+            self.__remove = to_tensor(remove).reshape(self.__dim, 2)
             self.__margin = None
             self.__centre = None
             self.__centre_offset = None
         else:
-            margin = expand_range_arg(margin, dim=self._dim)
-            self.__margin = to_tensor(margin).reshape(self._dim, 2)
-            self.__centre = to_tuple(centre, broadcast=self._dim)   # Tensors can't store str types.
-            assert len(self.__centre) == self._dim
-            self.__centre_offset = to_tensor(centre_offset, broadcast=self._dim)
-            assert len(self.__centre_offset) == self._dim
+            margin = expand_range_arg(margin, dim=self.__dim)
+            self.__margin = to_tensor(margin).reshape(self.__dim, 2)
+            self.__centre = to_tuple(centre, broadcast=self.__dim)   # Tensors can't store str types.
+            assert len(self.__centre) == self.__dim
+            self.__centre_offset = to_tensor(centre_offset, broadcast=self.__dim)
+            assert len(self.__centre_offset) == self.__dim
             self.__remove = None
 
-        super().set_params(
-            self.__class__.__name__,
-            centre=self.__centre,
-            centre_offset=self.__centre_offset,
-            margin=self.__margin,
-            remove=self.__remove,
+    @property
+    def params(self) -> TransformParams:
+        return super().params(
+            centre=to_tuple(self.__centre) if self.__centre != 'image-centre' else wrap_quotes('image-centre'),
+            centre_offset=to_tuple(self.__centre_offset) if self.__centre_offset is not None else None,
+            margin=to_tuple(self.__margin.flatten()) if self.__margin is not None else None,
+            remove=to_tuple(self.__remove.flatten()) if self.__remove is not None else None,
         )
 
     def __str__(self) -> str:
+        return self.to_str()
+
+    def to_str(
+        self,
+        subtransform: bool = False,
+        ) -> str:
         return super().__str__(
             self.__class__.__name__,
-            centre=to_tuple(self.__centre, decimals=3),
-            centre_offset=to_tuple(self.__centre_offset.flatten(), decimals=3) if self.__centre_offset is not None else None,
-            margin=to_tuple(self.__margin.flatten(), decimals=3) if self.__margin is not None else None,
-            remove=to_tuple(self.__remove.flatten(), decimals=3) if self.__remove is not None else None,
+            centre=to_tuple(self.__centre, dp=3) if self.__centre != 'image-centre' else wrap_quotes('image-centre'),
+            centre_offset=to_tuple(self.__centre_offset.flatten(), dp=3) if self.__centre_offset is not None else None,
+            margin=to_tuple(self.__margin.flatten(), dp=3) if self.__margin is not None else None,
+            remove=to_tuple(self.__remove.flatten(), dp=3) if self.__remove is not None else None,
+            subtransform=subtransform,
         )
 
     def transform_grid(
@@ -69,7 +78,7 @@ class Crop(GridTransform):
         size, affine = grid
         if self.__remove is not None:
             # Get the current FOV in image coords.
-            fov_min, fov_max = fov(size, affine=None)
+            fov_min, fov_max = fov((size, None))
 
             # Get the amounts to remove.
             # Could be either image/world coords depending on if affine is passed.
@@ -86,7 +95,7 @@ class Crop(GridTransform):
             fov_max = torch.clamp(fov_max - remove_max, max=(size - 1))
         else:
             # Get the crop centre.
-            fov_c = fov_centre(size, affine=None)
+            fov_c = fov_centre((size, None))
             centre = [fov_c[i] if c == 'image-centre' else c for i, c in enumerate(self.__centre)]
             centre = to_tensor(centre, device=size.device)
 
@@ -108,7 +117,7 @@ class Crop(GridTransform):
             fov_max = torch.clamp(centre + margin_max, max=(size - 1))
 
         # Get new size.
-        size_t = fov_max - fov_min
+        size_t = fov_max - fov_min + 1
         size_t = size_t.clamp(0)
 
         # Check result.
@@ -129,46 +138,52 @@ class Crop(GridTransform):
 
         return size_t, affine_t
 
+    @alias_kwargs(
+        ('a', 'affine'),
+        ('fo', 'filter_offgrid'),
+        ('rf', 'return_filtered'),
+        ('rs', 'return_single'),
+        ('s', 'size'),
+    )
     def transform_points(
         self,
         points: Points | List[Points],
         affine: AffineMatrix | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
-        filter_offgrid: bool = True,
-        # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
+        filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
         return_filtered: bool = False,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
         ) -> Points | List[Points | Indices | List[Indices]]:
-        pointses, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_expanded=True)
-        device = get_group_device(pointses, device=self._device)
-        return_types = [type(p) for p in pointses]
-        pointses = [to_tensor(p, device=device, dtype=torch.float32) for p in pointses]
+        assert_points_shapes(points, self.__dim)
+        points, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_matched=True)
+        device = get_group_device(points, device=self.__device)
+        return_types = [type(p) for p in points]
+        points = [to_tensor(p, device=device, dtype=torch.float32) for p in points]
         size = to_tensor(size, device=device, dtype=torch.int32)
         affine = to_tensor(affine, device=device, dtype=torch.float32)
+        filter_offgrid = filter_offgrid if filter_offgrid is not None else self.__filter_offgrid
 
         points_ts = []
         indiceses = []
-        for p in pointses:
+        for p in points:
             points_t = p
 
             # Forward transformed points could end up off-screen and should be filtered.
             # However, we need to know which points are returned for loss calc for example.
-            if filter_offgrid:
+            if filter_offgrid is not False:    # "is not" required here because filter_offgrid=0 is valid.
                 # Get new FOV.
                 assert size is not None, "Size must be provided for filtering off-grid points."
                 assert affine is not None, "Affine must be provided for filtering off-grid points."
                 size_t, affine_t = self.transform_grid((size, affine))
-                spacing_t = affine_spacing(affine_t)
-                origin_t = affine_origin(affine_t)
 
-                # Get crop box.
-                min_mm = origin_t
-                max_mm = origin_t + size_t * spacing_t
-
-                # Crop points.
-                bounds_mm = torch.stack([min_mm, max_mm]).to(device)
-                to_keep = (points >= bounds_mm[0]) & (points < bounds_mm[1])
-                to_keep = to_keep.all(axis=1)
+                # Crop points to the new FOV.
+                fov_mm = fov((size_t, affine_t))
+                if filter_offgrid is True:
+                    in_fov = (points_t >= fov_mm[0]) & (points_t < fov_mm[1])
+                else:
+                    dims = arg_to_list(filter_offgrid, int)
+                    in_fov = (points_t[:, dims] >= fov_mm[0][dims]) & (points_t[:, dims] < fov_mm[1][dims])
+                to_keep = in_fov.all(axis=1)
                 points_t = points_t[to_keep]
                 indices = torch.where(~to_keep)[0].type(torch.int32)
                 indiceses.append(indices)
@@ -180,15 +195,14 @@ class Crop(GridTransform):
         if filter_offgrid and return_filtered:
             indiceses = to_return_format(indiceses, return_single=True, return_types=return_types)
             other_data.append(indiceses)
-        results = to_return_format(points_ts, other_data=other_data, return_single=points_was_single, return_types=return_types)
-        return results
+        return to_return_format(points_ts, other_data=other_data, return_single=points_was_single, return_types=return_types)
 
 class RandomCrop(RandomGridTransform):
     @alias_kwargs(
-        ('cc', 'centre'),
-        ('cco', 'centre_offset'),
-        ('cm', 'margin'),
-        ('cr', 'remove'),
+        ('c', 'centre'),
+        ('co', 'centre_offset'),
+        ('m', 'margin'),
+        ('r', 'remove'),
         ('s', 'symmetric'),
     )
     def __init__(
@@ -216,89 +230,92 @@ class RandomCrop(RandomGridTransform):
         self.__margin = margin
         self.__remove = remove
         self.__symmetric = symmetric
-        super().set_params(
-            self.__class__.__name__,
-            centre=self.__centre,
-            centre_offset=self.__centre_offset,
-            margin=self.__margin,
-            remove=self.__remove,
-            symmetric=self.__symmetric,
-        )
+        self.__expand_range_args()
 
-    def freeze(self) -> Crop:
-        # Expand the range args.
-        # We do this now because 'set_dim' could be called after RandomCrop.__init__.
-        symmetric = to_tensor(self.__symmetric, broadcast=self._dim)
-        if self.__remove is not None: # Cropping by remove from each axis end.
+    def __expand_range_args(self) -> None:
+        symmetric = to_tensor(self.__symmetric, broadcast=self.__dim)
+        centre_offset_range = margin_range = remove_range = None
+        if self.__remove is not None:
             cr_vals_per_dim = 4
-            remove_range = expand_range_arg(self.__remove, dim=self._dim, vals_per_dim=cr_vals_per_dim)
-            assert len(remove_range) == cr_vals_per_dim * self._dim, f"Expected 'remove' of length {cr_vals_per_dim * self._dim}, got {len(remove_range)}."
-
-            # Ensure crop ranges allow symmetry.
+            remove_range = expand_range_arg(self.__remove, check_range='<=', dim=self.__dim, vals_per_dim=cr_vals_per_dim)
+            assert len(remove_range) == cr_vals_per_dim * self.__dim, f"Expected 'remove' of length {cr_vals_per_dim * self.__dim}, got {len(remove_range)}."
             for i, s in enumerate(symmetric):
                 cr_axis_vals = remove_range[i * cr_vals_per_dim:(i + 1) * cr_vals_per_dim]
                 if s and (cr_axis_vals[0] != cr_axis_vals[2] or cr_axis_vals[1] != cr_axis_vals[3]):
                     raise ValueError(f"Cannot create symmetric crops for axis {i} with crop ranges {cr_axis_vals}.")
-
-            remove_range = to_tensor(remove_range).reshape(self._dim, 2, 2)
-            centre = None
-            centre_offset = None
-            margin = None
-
-        else:   # Cropping using centre point and margin.
+            remove_range = to_tensor(remove_range).reshape(self.__dim, 2, 2).permute(2, 1, 0)
+        else:
             cmr_vals_per_dim = 4
-            margin_range = expand_range_arg(self.__margin, dim=self._dim, vals_per_dim=cmr_vals_per_dim)
-            assert len(margin_range) == cmr_vals_per_dim * self._dim, f"Expected 'margin' of length {cmr_vals_per_dim * self._dim}, got {len(margin_range)}."
-
-            # Ensure crop margin ranges allow symmetry.
+            margin_range = expand_range_arg(self.__margin, check_range='<=', dim=self.__dim, vals_per_dim=cmr_vals_per_dim)
+            assert len(margin_range) == cmr_vals_per_dim * self.__dim, f"Expected 'margin' of length {cmr_vals_per_dim * self.__dim}, got {len(margin_range)}."
             for i, s in enumerate(symmetric):
                 cmr_axis_vals = margin_range[i * cmr_vals_per_dim:(i + 1) * cmr_vals_per_dim]
                 if s and (cmr_axis_vals[0] != cmr_axis_vals[2] or cmr_axis_vals[1] != cmr_axis_vals[3]):
                     raise ValueError(f"Cannot create symmetric crops for axis {i} with crop margin ranges {cmr_axis_vals}.")
+            margin_range = to_tensor(margin_range).reshape(self.__dim, 2, 2).permute(2, 1, 0)
+            centre_offset_range = expand_range_arg(self.__centre_offset, check_range='<=', dim=self.__dim, negate_lower=True)
+            assert len(centre_offset_range) == 2 * self.__dim, f"Expected 'centre_offset' of length {2 * self.__dim}, got {len(centre_offset_range)}."
+            centre_offset_range = to_tensor(centre_offset_range).reshape(self.__dim, 2).T
+        self.__centre_offset_range = centre_offset_range
+        self.__margin_range = margin_range
+        self.__remove_range = remove_range
+        self.__symmetric_t = symmetric
 
-            margin = to_tensor(margin_range).reshape(self._dim, 2, 2)
-            centre = arg_to_list(centre, (int, float, str), broadcast=self._dim, iter_types=(np.ndarray, torch.Tensor))
-            assert len(centre) == self._dim, f"Expected 'centre' of length {self._dim}, got {len(centre)}."
-            centre_offset_range = expand_range_arg(centre_offset_range, dim=self._dim, negate_lower=True)
-            assert len(centre_offset_range) == 2 * self._dim, f"Expected 'centre_offset_range' of length {2 * self._dim}, got {len(centre_offset_range)}."
-            centre_offset_range = to_tensor(centre_offset_range).reshape(self._dim, 2)
-            remove = None
-
-        # Draw the crop parameters.
-        should_apply = self._rng.random(1) < self._p
+    def freeze(self) -> Crop | Identity:
+        should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
-            return Identity(dim=self._dim)
-        draw = to_tensor(self._rng.random((self._dim, 2)))
-        if remove_range is not None:
-            remove_draw = (draw * (remove_range[:, :, 1] - remove_range[:, :, 0]) + remove_range[:, :, 0])
-            # Copy lower end of axis for symmetric crops.
-            sym_axes = torch.argwhere(symmetric).flatten()
-            remove_draw[sym_axes, 1] = remove_draw[sym_axes, 0]
-            margin_draw = None
-            centre_offset_draw = None
-        else:
-            centre_offset_draw = (draw * (centre_offset_range[:, 1] - centre_offset_range[:, 0]) + centre_offset_range[:, 0])
-            margin_draw = (draw * (margin[:, :, 1] - margin[:, :, 0]) + margin[:, :, 0])
-            # Copy lower end of axis for symmetric crops.
-            sym_axes = torch.argwhere(symmetric).flatten()
-            margin_draw[sym_axes, 1] = margin_draw[sym_axes, 0]
-            draw = to_tensor(self._rng.random(self._dim))
-            remove_draw = None
+            return Identity(dim=self.__dim)
 
-        params = dict(
-            centre=self.__centre,
-            centre_offset=centre_offset_draw,
-            margin=margin_draw.flatten() if margin_draw is not None else None,
-            remove=remove_draw.flatten() if remove_draw is not None else None,
-        )
+        draw = to_tensor(self.__rng.random((2, self.__dim)))
+        if self.__remove_range is not None:
+            remove_draw = draw * (self.__remove_range[1] - self.__remove_range[0]) + self.__remove_range[0]
+            sym_axes = torch.argwhere(self.__symmetric_t).flatten()
+            remove_draw[1, sym_axes] = remove_draw[0, sym_axes]
+            params = dict(
+                remove=remove_draw.T.flatten(),
+            )
+        else:
+            centre_offset_draw = to_tensor(self.__rng.random(self.__dim)) * (self.__centre_offset_range[1] - self.__centre_offset_range[0]) + self.__centre_offset_range[0]
+            margin_draw = draw * (self.__margin_range[1] - self.__margin_range[0]) + self.__margin_range[0]
+            sym_axes = torch.argwhere(self.__symmetric_t).flatten()
+            margin_draw[1, sym_axes] = margin_draw[0, sym_axes]
+            params = dict(
+                centre=self.__centre,
+                centre_offset=centre_offset_draw,
+                margin=margin_draw.T.flatten(),
+            )
         return super().freeze(Crop, params)
 
+    @property
+    def params(self) -> TransformParams:
+        return super().params(
+            centre=self.__centre,
+            centre_offset=to_tuple(self.__centre_offset_range.T.flatten()) if self.__centre_offset_range is not None else None,
+            margin=to_tuple(self.__margin_range.permute(2, 1, 0).flatten()) if self.__margin_range is not None else None,
+            remove=to_tuple(self.__remove_range.permute(2, 1, 0).flatten()) if self.__remove_range is not None else None,
+            symmetric=self.__symmetric,
+        )
+
+    def set_dim(
+        self,
+        dim: SpatialDim,
+        ) -> None:
+        super().set_dim(dim)
+        self.__expand_range_args()
+
     def __str__(self) -> str:
+        return self.to_str()
+
+    def to_str(
+        self,
+        subtransform: bool = False,
+        ) -> str:
         return super().__str__(
             self.__class__.__name__,
-            centre=self.__centre,
-            centre_offset=self.__centre_offset,
-            margin=self.__margin,
-            remove=self.__remove,
+            centre=to_tuple(self.__centre, dp=3) if self.__centre != 'image-centre' else wrap_quotes('image-centre'),
+            centre_offset=to_tuple(self.__centre_offset_range.T.flatten(), dp=3) if self.__centre_offset_range is not None else None,
+            margin=to_tuple(self.__margin_range.permute(2, 1, 0).flatten(), dp=3) if self.__margin_range is not None else None,
+            remove=to_tuple(self.__remove_range.permute(2, 1, 0).flatten(), dp=3) if self.__remove_range is not None else None,
+            subtransform=subtransform,
             symmetric=self.__symmetric,
         )

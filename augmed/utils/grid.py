@@ -2,9 +2,11 @@ import torch
 import torch
 from typing import Literal
 
-from ..typing import AffineMatrixTensor, ImageTensor, Number, PointsTensor, SizeTensor, SpatialDim
+from ..config import get_dim
+from ..typing import AffineMatrixTensor, ImageTensor, Number, PointsTensor, SamplingGridTensor, SpatialDim
+from ..utils.args import arg_default
 from ..utils.conversion import to_tensor
-from ..utils.geometry import affine_origin, affine_spacing
+from ..utils.geometry import affine_origin, affine_spacing, create_affine, spatial_size
 
 # 'grid_sample' can be used for interpolating at points (Nx3) or on image grids (3xXxYxZ).
 # We don't need to know the spatial coordinates of the resampling grid for the interpolation,
@@ -12,62 +14,65 @@ from ..utils.geometry import affine_origin, affine_spacing
 # For 'grid_sample' we just need to know the coordinates of each sample (points, mm) in the moving
 # image (image) and the coordinates of the moving image grid (affine).
 def grid_points(
-    size: SizeTensor,
-    affine: AffineMatrixTensor | None = None,
-    return_superset: bool = False,
+    grid: SamplingGridTensor,
+    # return_superset: bool = False,
     ) -> PointsTensor:
     # Get grid points.
+    size, affine = grid
     dim = len(size)
     grids = torch.meshgrid([torch.arange(s.item()) for s in size], indexing='ij')
-    points = torch.stack(grids, dim=-1).reshape(-1, dim).to(size.device)
+    points = torch.stack(grids, dim=-1).reshape(-1, dim)
+    points = points.to(device=size.device, dtype=torch.float32)
+
     # Convert from voxel to world coords if affine is provided.
     if affine is not None:
         origin = affine_origin(affine)
         spacing = affine_spacing(affine)
         points = points * spacing + origin
 
-    # Create superset.
-    if return_superset:
-        # Move points to device for concatenation.
-        # Which device should this go on? Use first GPU if available, because
-        # we're going to have to calculate 'backward_transform_points' on these points.
-        device_types = [d.type for d in devices]
-        super_device = devices[device_types.index('cuda')] if 'cuda' in device_types else devices[0]
-        points = [p.to(super_device) for p in pointses]
+    # # Create superset.
+    # if return_superset:
+    #     # Move points to device for concatenation.
+    #     # Which device should this go on? Use first GPU if available, because
+    #     # we're going to have to calculate 'back_transform_points' on these points.
+    #     device_types = [d.type for d in devices]
+    #     super_device = devices[device_types.index('cuda')] if 'cuda' in device_types else devices[0]
+    #     points = [p.to(super_device) for p in points]
 
-        # Get superset of points.
-        # While it might seem like a good idea to create a superset of points to 
-        # reduce transform processing, in practice the act of getting unique points
-        # takes much longer than just transforming them all.
-        # !!! This 'unique' op, over millions of points, takes a looooong time.
-        # This kind of makes the superset idea non-viable.
-        # Apparently it sorts the array first, which might be the slow part.
-        # Our stacked array is not sorted by default.
-        super_points = torch.vstack(points).unique(dim=0)
+    #     # Get superset of points.
+    #     # While it might seem like a good idea to create a superset of points to 
+    #     # reduce transform processing, in practice the act of getting unique points
+    #     # takes much longer than just transforming them all.
+    #     # !!! This 'unique' op, over millions of points, takes a looooong time.
+    #     # This kind of makes the superset idea non-viable.
+    #     # Apparently it sorts the array first, which might be the slow part.
+    #     # Our stacked array is not sorted by default.
+    #     super_points = torch.vstack(points).unique(dim=0)
 
-        # For each image, get the indices of it's points within the superset.
-        # This is required for creating subsets later on after 'backward_transform_points'.
-        indices = []
-        for p, d in zip(pointses, devices):
-            matches = (p[:, None, :].to(super_device) == super_points[None, :, :])
-            matches = matches.all(dim=-1)
-            index = matches.float().argmax(dim=1)
-            index = index.to(d)
-            indices.append(index)
+    #     # For each image, get the indices of it's points within the superset.
+    #     # This is required for creating subsets later on after 'back_transform_points'.
+    #     indices = []
+    #     for p, d in zip(points, devices):
+    #         matches = (p[:, None, :].to(super_device) == super_points[None, :, :])
+    #         matches = matches.all(dim=-1)
+    #         index = matches.float().argmax(dim=1)
+    #         index = index.to(d)
+    #         indices.append(index)
 
-        return super_points, indices
+    #     return super_points, indices
 
     return points
 
 def grid_sample(
     image: ImageTensor,
-    affine: AffineMatrixTensor,
     points: PointsTensor | ImageTensor,
-    mode: Literal['bicubic', 'bilinear', 'nearest'] = 'bilinear',
-    padding: Number | Literal['border', 'max', 'min', 'reflection', 'zeros'] = 'min',
-    dim: SpatialDim = 3,
+    affine: AffineMatrixTensor | None = None,
+    dim: SpatialDim | None = None,
+    fill: Number | Literal['border', 'max', 'min', 'reflection', 'zeros'] = 'min',
+    interpolation: Literal['bicubic', 'bilinear', 'nearest'] = 'bilinear',
     **kwargs,
     ) -> ImageTensor | PointsTensor:
+    dim = arg_default(dim, dim, get_dim())
     if points.shape[-1] == 2 or points.shape[-1] == 3:
         points_type = 'points'
     else:
@@ -75,8 +80,11 @@ def grid_sample(
 
     # We use 'float32' for resample points and maintain the original dtype of 'image'.
     points = to_tensor(points, device=image.device, dtype=torch.float32)
-    size = to_tensor(image.shape[-dim:], device=image.device, dtype=torch.float32)
-    affine = to_tensor(affine, device=image.device, dtype=torch.float32)
+    size = to_tensor(spatial_size(image, dim), device=image.device, dtype=torch.float32)
+    if affine is None:
+        affine = create_affine(device=image.device, dim=dim)
+    else:
+        affine = to_tensor(affine, device=image.device, dtype=torch.float32)
     origin = affine_origin(affine)
     spacing = affine_spacing(affine)
 
@@ -103,33 +111,33 @@ def grid_sample(
     if return_dtype is not torch.float32:
         image = image.type(torch.float32)
 
-    # Convert padding to float.
-    if isinstance(padding, str):
-        if padding == 'min':
-            padding = float(image.min())
-        elif padding == 'max':
-            padding = float(image.max())
+    # Convert fill to float.
+    if isinstance(fill, str):
+        if fill == 'min':
+            fill = float(image.min())
+        elif fill == 'max':
+            fill = float(image.max())
         else:
-            padding_mode = padding      # Pass values such as 'border' directly to 'grid_sample'.
+            fill_mode = fill      # Pass values such as 'border' directly to 'grid_sample'.
 
-    # For number padding, translate intensities as 'grid_sample' only provides zero-padding.
-    if isinstance(padding, (int, float)):
-        image = image - padding
-        padding_mode = 'zeros'
+    # For number fill, translate intensities as 'grid_sample' only provides zero-fill.
+    if isinstance(fill, (int, float)):
+        image = image - fill
+        fill_mode = 'zeros'
 
     # Determine interpolation mode.
-    mode = 'nearest' if return_dtype is torch.bool else mode
+    interp_mode = 'nearest' if return_dtype is torch.bool else interpolation
 
     # Resample image.
-    image_t = torch.nn.functional.grid_sample(image, points, align_corners=True, mode=mode, padding_mode=padding_mode, **kwargs)
+    image_t = torch.nn.functional.grid_sample(image, points, align_corners=True, mode=interp_mode, padding_mode=fill_mode, **kwargs)
 
     # Convert to return format.
     if return_dtype is not torch.float32:
         image_t = image_t.type(return_dtype)
 
-    # Reverse intensity translation for padding.
-    if isinstance(padding, (int, float)):
-        image_t = image_t + padding
+    # Reverse intensity translation for fill.
+    if isinstance(fill, (int, float)):
+        image_t = image_t + fill
 
     # Remove channels that were added for 'grid_sample'.
     image_t = image_t.squeeze(axis=tuple(range(image_dims_to_add))) if image_dims_to_add > 0 else image_t

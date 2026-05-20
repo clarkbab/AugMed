@@ -3,8 +3,10 @@ from __future__ import annotations
 import torch
 from typing import Tuple
 
-from ...typing import ImageTensor, Number
+from ...typing import ImageTensor, Number, TransformParams
+from ...utils.args import alias_kwargs
 from ...utils.conversion import to_tensor, to_tuple
+from ...utils.maths import round
 from ..identity import Identity
 from .intensity import IntensityTransform, RandomIntensityTransform
 
@@ -15,6 +17,10 @@ from .intensity import IntensityTransform, RandomIntensityTransform
 # m=1500 -> m=(1500, 1500, ...)
 # m=(1500, 1800) -> m=(1500, 1800, ...)
 class RandomThreshold(RandomIntensityTransform):
+    @alias_kwargs(
+        ('mn', 'min'),
+        ('mx', 'max'),
+    )
     def __init__(
         self,
         min: Number | Tuple[Number, ...] | None = None,
@@ -31,17 +37,13 @@ class RandomThreshold(RandomIntensityTransform):
         self.__max_range = to_tensor(max, broadcast=2) if max is not None else None
         if self.__max_range is not None:
             assert len(self.__max_range) == 2, f"Expected 'max' of length 2, got {len(self.__max_range)}."
-        super().set_params(
-            self.__class__.__name__,
-            max=self.__max_range,
-            min=self.__min_range,
-        )
 
-    def freeze(self) -> Norm:
-        should_apply = self._rng.random(1) < self._p
+    def freeze(self) -> Threshold | Identity:
+        should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
-            return Identity(dim=self._dim)
-        draw = to_tensor(self._rng.random(2))
+            return Identity(dim=self.__dim)
+
+        draw = to_tensor(self.__rng.random(2))
         min_draw = draw[0] * (self.__min_range[1] - self.__min_range[0]) + self.__min_range[0] if self.__min_range is not None else None
         max_draw = draw[0] * (self.__max_range[1] - self.__max_range[0]) + self.__max_range[0] if self.__max_range is not None else None
         params = dict(
@@ -50,14 +52,32 @@ class RandomThreshold(RandomIntensityTransform):
         )
         return super().freeze(Threshold, params)
 
+    @property
+    def params(self) -> TransformParams:
+        return super().params(
+            max=to_tuple(self.__max_range) if self.__max_range is not None else None,
+            min=to_tuple(self.__min_range) if self.__min_range is not None else None,
+        )
+
     def __str__(self) -> str:
+        return self.to_str()
+
+    def to_str(
+        self,
+        subtransform: bool = False,
+        ) -> str:
         return super().__str__(
             self.__class__.__name__,
-            max=to_tuple(self.__max_range, decimals=3) if self.__max_range is not None else None,
-            min=to_tuple(self.__min_range, decimals=3) if self.__min_range is not None else None,
+            max=to_tuple(self.__max_range, dp=3) if self.__max_range is not None else None,
+            min=to_tuple(self.__min_range, dp=3) if self.__min_range is not None else None,
+            subtransform=subtransform,
         )
 
 class Threshold(IntensityTransform):
+    @alias_kwargs(
+        ('mn', 'min'),
+        ('mx', 'max'),
+    )
     def __init__(
         self,
         min: Number | None = None,
@@ -67,17 +87,23 @@ class Threshold(IntensityTransform):
         super().__init__(**kwargs)
         self.__min = min
         self.__max = max
-        super().set_params(
-            self.__class__.__name__,
-            max=self.__max,
-            min=self.__min,
-        )
+
+    @property
+    def params(self) -> TransformParams:
+        return super().params(max=self.__max, min=self.__min)
 
     def __str__(self) -> str:
+        return self.to_str()
+
+    def to_str(
+        self,
+        subtransform: bool = False,
+        ) -> str:
         return super().__str__(
             self.__class__.__name__,
-            max=round(self.__max, 3) if self.__max is not None else None,
-            min=round(self.__min, 3) if self.__min is not None else None,
+            max=round(self.__max, dp=3) if self.__max is not None else None,
+            min=round(self.__min, dp=3) if self.__min is not None else None,
+            subtransform=subtransform,
         )
 
     def transform_intensity(

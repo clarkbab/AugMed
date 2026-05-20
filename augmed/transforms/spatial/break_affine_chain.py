@@ -5,9 +5,10 @@ import torch
 from typing import List
 
 from ...typing import Indices, Points, PointsTensor
-from ...utils.args import arg_to_list
+from ...utils.args import alias_kwargs, arg_to_list
+from ...utils.assertions import assert_points_shapes
 from ...utils.conversion import to_return_format, to_tensor
-from ...utils.python import get_group_device
+from ...utils.python import get_group_device, set_private_attr
 from .spatial import SpatialTransform
 
 # This is really just a utility class for breaking affine chains in the pipeline
@@ -18,12 +19,12 @@ class BreakAffineChain(SpatialTransform):
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
-        self._params = dict(
-            dim=self._dim,
+        set_private_attr(self, '__params', dict(
+            dim=self.__dim,
             type=self.__class__.__name__,
-        )
+        ))
 
-    def backward_transform_points(
+    def back_transform_points(
         self,
         points: PointsTensor,
         **kwargs,
@@ -31,24 +32,39 @@ class BreakAffineChain(SpatialTransform):
         return points
 
     def __str__(self) -> str:
+        return self.to_str()
+
+    def to_str(
+        self,
+        subtransform: bool = False,
+        ) -> str:
         return super().__str__(
             self.__class__.__name__,
+            subtransform=subtransform,
         )
 
+    @alias_kwargs(
+        ('fo', 'filter_offgrid'),
+        ('rf', 'return_filtered'),
+        ('rs', 'return_single'),
+    )
     def transform_points(
         self,
         points: Points | List[Points],
+        filter_offgrid: bool | None = None,
+        return_filtered: bool = False,
+        return_single: bool = True,
         **kwargs,
         ) -> Points | List[Points | Indices | List[Indices]]:
-        # Add indices to support the API.
-        pointses, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_expanded=True)
-        device = get_group_device(pointses, device=self._device)
-        return_types = [type(p) for p in pointses]
-        pointses = [to_tensor(p, device=device, dtype=torch.float32) for p in pointses]
+        assert_points_shapes(points, self.__dim)
+        points, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_matched=True)
+        device = get_group_device(points, device=self.__device)
+        return_types = [type(p) for p in points]
+        points = [to_tensor(p, device=device, dtype=torch.float32) for p in points]
+        filter_offgrid = filter_offgrid if filter_offgrid is not None else self.__filter_offgrid
         other_data = []
         if filter_offgrid and return_filtered:
-            indiceses = [to_tensor([], device=device, dtype=torch.int32) for _ in pointses]
+            indiceses = [to_tensor([], device=device, dtype=torch.int32) for _ in points]
             indiceses = to_return_format(indiceses, return_single=False, return_types=return_types)
             other_data.append(indiceses)
-        results = to_return_format(pointses, other_data=other_data, return_single=points_was_single, return_types=return_types)
-        return results
+        return to_return_format(points, other_data=other_data, return_single=return_single and points_was_single, return_types=return_types)

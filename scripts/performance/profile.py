@@ -305,7 +305,7 @@ def phase_profile(
     Phases measured:
       - freeze:   random sampling + pipeline construction
       - grid_pts: grid_points() — generating the dense coordinate grid
-      - backward: backward_transform_points — affine chains + elastic interp
+      - backward: back_transform_points — affine chains + elastic interp
       - resample: grid_sample — the actual torch.nn.functional.grid_sample call
       - intensity: intensity transform application (e.g. MinMax)
       - total:    full end-to-end time

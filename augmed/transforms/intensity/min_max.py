@@ -3,13 +3,18 @@ from __future__ import annotations
 import torch
 from typing import Tuple
 
-from ...typing import ImageTensor, Number
-from ...utils.args import expand_range_arg
+from ...typing import ImageTensor, Number, TransformParams
+from ...utils.args import alias_kwargs, expand_range_arg
 from ...utils.conversion import to_tensor, to_tuple
+from ...utils.maths import round
 from ..identity import Identity
 from .intensity import IntensityTransform, RandomIntensityTransform
 
 class MinMax(IntensityTransform):
+    @alias_kwargs(
+        ('mn', 'min'),
+        ('mx', 'max'),
+    )
     def __init__(
         self,
         min: Number = 0,
@@ -19,17 +24,23 @@ class MinMax(IntensityTransform):
         super().__init__(**kwargs)
         self.__min = min
         self.__max = max
-        super().set_params(
-            self.__class__.__name__,
-            max=self.__max,
-            min=self.__min,
-        )
+
+    @property
+    def params(self) -> TransformParams:
+        return super().params(max=self.__max, min=self.__min)
 
     def __str__(self) -> str:
+        return self.to_str()
+
+    def to_str(
+        self,
+        subtransform: bool = False,
+        ) -> str:
         return super().__str__(
             self.__class__.__name__,
-            max=round(self.__max, 3),
-            min=round(self.__min, 3),
+            max=round(self.__max, dp=3),
+            min=round(self.__min, dp=3),
+            subtransform=subtransform,
         )
 
     def transform_intensity(
@@ -42,41 +53,60 @@ class MinMax(IntensityTransform):
         return image_t
 
 class RandomMinMax(RandomIntensityTransform):
+    @alias_kwargs(
+        ('mn', 'min'),
+        ('mx', 'max'),
+    )
     def __init__(
         self,
-        min: Number | Tuple[Number, ...] = (-0.2, 0.2),
-        max: Number | Tuple[Number, ...] = (0.8, 1.2),
+        min: Number | Tuple[Number, ...] = 0,
+        max: Number | Tuple[Number, ...] = 1,
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
-        min_range = expand_range_arg(min, dim=1)
-        assert len(min_range) == 2, f"Expected 'min' of length 2, got {len(min_range)}."
-        self.__min_range = to_tensor(min_range, dtype=torch.float32)
-        max_range = expand_range_arg(max, dim=1)
-        assert len(max_range) == 2, f"Expected 'max' of length 2, got {len(max_range)}."
-        self.__max_range = to_tensor(max_range, dtype=torch.float32)
-        super().set_params(
-            self.__class__.__name__,
-            max=self.__max_range,
-            min=self.__min_range,
-        )
+        self.__min = min
+        self.__max = max
+        self.__expand_range_args()
 
-    def freeze(self) -> MinMax:
-        should_apply = self._rng.random(1) < self._p
+    def __expand_range_args(self) -> None:
+        dim = 1    # Dim=1 for all intensity transforms.
+        min_range = expand_range_arg(self.__min, dim=dim)
+        assert len(min_range) == 2 * dim, f"Expected 'min' of length {2 * dim}, got {len(min_range)}."
+        self.__min_range = to_tensor(min_range)
+        max_range = expand_range_arg(self.__max, dim=dim)
+        assert len(max_range) == 2 * dim, f"Expected 'max' of length {2 * dim}, got {len(max_range)}."
+        self.__max_range = to_tensor(max_range)
+
+    def freeze(self) -> MinMax | Identity:
+        should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
-            return Identity(dim=self._dim)
-        draw = to_tensor(self._rng.random(2), dtype=torch.float32)
-        min_draw = draw[0] * (self.__min_range[1] - self.__min_range[0]) + self.__min_range[0]
-        max_draw = draw[0] * (self.__max_range[1] - self.__max_range[0]) + self.__max_range[0]
+            return Identity(dim=self.__dim)
+
+        dim = 1    # Dim=1 for all intensity transforms.
+        draw = to_tensor(self.__rng.random(dim))
+        min_draw = ((self.__min_range[1] - self.__min_range[0]) * draw + self.__min_range[0]).item()
+        draw = to_tensor(self.__rng.random(dim))
+        max_draw = ((self.__max_range[1] - self.__max_range[0]) * draw + self.__max_range[0]).item()
         params = dict(
-            max=max_draw.item(),
-            min=min_draw.item(),
+            max=max_draw,
+            min=min_draw,
         )
         return super().freeze(MinMax, params)
 
+    @property
+    def params(self) -> TransformParams:
+        return super().params(max=to_tuple(self.__max_range), min=to_tuple(self.__min_range))
+
     def __str__(self) -> str:
+        return self.to_str()
+
+    def to_str(
+        self,
+        subtransform: bool = False,
+        ) -> str:
         return super().__str__(
             self.__class__.__name__,
-            max=to_tuple(self.__max_range, decimals=3),
-            min=to_tuple(self.__min_range, decimals=3),
+            max=to_tuple(self.__max_range, dp=3),
+            min=to_tuple(self.__min_range, dp=3),
+            subtransform=subtransform,
         )

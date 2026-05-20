@@ -8,7 +8,6 @@ from .args import bubble_args
 def to_numpy(
     data: bool | Number | str | List[bool | Number | str] | np.ndarray | torch.Tensor | torch.Size,
     broadcast: int | None = None,
-    device: torch.device | None = None,
     dtype: torch.dtype | None = None,
     return_device: bool = False,
     return_type: bool = False,
@@ -128,7 +127,7 @@ def to_tensor(
 @bubble_args(to_numpy)
 def to_tuple(
     data: bool | Number | str | List[bool | Number | str] | np.ndarray | torch.Tensor | torch.Size,
-    decimals: int | None = None,
+    dp: int | None = None,
     **kwargs,
     ) -> Tuple[bool | Number | str, ...] | None:
     if data is None:
@@ -137,7 +136,8 @@ def to_tuple(
     data = tuple(to_numpy(data, **kwargs).tolist())
 
     # Round elements if required.
-    if decimals is not None:
-        data = tuple(round(x, decimals) if isinstance(x, float) else x for x in data)
+    # Can't use our "maths.py -> round" function here because of circular dependencies.
+    if dp is not None:
+        data = tuple(round(x, dp) if isinstance(x, float) else x for x in data)
 
     return data

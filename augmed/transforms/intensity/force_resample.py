@@ -1,4 +1,5 @@
 from ...typing import ImageTensor
+from ...utils.python import set_private_attr
 from .intensity import IntensityTransform
 
 # This is really just a utility class for triggering resamples in the pipeline
@@ -6,15 +7,22 @@ from .intensity import IntensityTransform
 class ForceResample(IntensityTransform):
     def __init__(
         self,
-        **kwargs) -> None:
+        **kwargs,
+        ) -> None:
         super().__init__(**kwargs)
-        self._params = dict(
-            dim=self._dim,
+        set_private_attr(self, '__params', dict(
+            dim=self.__dim,
             type=self.__class__.__name__,
-        )
+        ))
 
     def __str__(self) -> str:
-        return super().__str__(self.__class__.__name__)
+        return self.to_str()
+
+    def to_str(
+        self,
+        subtransform: bool = False,
+        ) -> str:
+        return super().__str__(self.__class__.__name__, subtransform=subtransform)
 
     def transform_intensity(
         self,

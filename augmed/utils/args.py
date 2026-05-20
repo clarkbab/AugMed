@@ -4,10 +4,30 @@ import inspect
 import numpy as np
 import textwrap
 import torch
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Literal, Tuple
 
 from ..typing import Number
 from .python import isinstance_generic, version
+
+# Does 'arg' have a value?
+def arg_default(
+    arg: Any | List[Any] | None,
+    return_arg: Any | None,  # Return this value if at least one arg is not None.
+    default: Any,    # Return this value is all args are None.
+    ) -> Any:
+    if not isinstance(arg, list) and not isinstance(arg, tuple):
+        args = [arg]
+    else:
+        args = arg
+    all_none = True
+    for a in args:
+        if a is not None:
+            all_none = False
+            break
+    if all_none:
+        return default
+    else:
+        return return_arg
 
 class CallVisitor(ast.NodeVisitor):
     def __init__(
@@ -53,32 +73,19 @@ def alias_kwargs(
         return wrapper
     return decorator
 
+# Checks if 'arg' matches any of the specified types and ensures that the outpu
+# is a list of this type - e.g. converts a single str to a List[str].
 def arg_to_list(
     arg: Any | None,
-    types: Any | List[Any],     # Check if 'arg' matches any of these types.
-    broadcast: int = 1,         # Expand a match to multiple elements, e.g. None -> [None, None, None].
-    exceptions: Any | List[Any] | None = None,
-    iter_types: Any | List[Any] | None = None,   # If 'arg' is one of these types, convert to list (e.g. list(obj)) instead of wrapping (e.g. [obj]).
-    literals: Dict[Any, List[Any]] | None = None,   # Check if 'arg' matches any of these literal values.
-    out_type: Any | None = None,    # Convert a match to a different output type.
-    return_expanded: bool = False,   # Return whether the match was successful.
-    ) -> List[Any]:
+    types: Any | List[Any],
+    broadcast: int = 1,             # Expand a list of length 1 to length 'broadcast'.
+    literals: Dict[Any, List[Any]] | None = None,   # Some args (e.g. 'all') should behave differently.
+    out_type: Any | None = None,    # Ensure that the output list of type 'out_type'.
+    return_matched: bool = False,   # Returns whether 'arg' matched any 'types'.
+    ) -> List[Any] | Any:
     # Convert types to list.
     if not isinstance(types, list) and not isinstance(types, tuple):
         types = [types]
-    if exceptions is not None and not isinstance(exceptions, list) and not isinstance(exceptions, tuple):
-        exceptions = [exceptions]
-    if iter_types is not None and not isinstance(iter_types, list) and not isinstance(iter_types, tuple):
-        iter_types = [iter_types]
-
-    # Check exceptions.
-    if exceptions is not None:
-        for e in exceptions:
-            if isinstance(arg, type(e)) and arg == e:
-                if return_expanded:
-                    return arg, False
-                else:
-                    return arg
     
     # Check literal matches.
     if literals is not None:
@@ -92,38 +99,46 @@ def arg_to_list(
                 if isinstance(arg, Callable):
                     arg = arg()
 
-                if return_expanded:
-                    return arg, False
-                else:
-                    return arg
-
-    # Check iterable types.
-    if iter_types is not None:
-        for t in iter_types:
-            if isinstance(arg, t):
-                arg = list(arg)
-                if return_expanded:
+                if return_matched:
                     return arg, False
                 else:
                     return arg
 
     # Check types.
-    expanded = False
+    matched = False
     for t in types:
         if isinstance_generic(arg, t):
-            expanded = True
+            matched = True
             arg = [arg] * broadcast
             break
         
     # Convert to output type.
-    if expanded and out_type is not None:
+    if matched and out_type is not None:
         arg = [out_type(a) for a in arg]
 
-    if return_expanded:
-        return arg, expanded
+    if return_matched:
+        return arg, matched
     else:
         return arg
 
+def assert_2d(
+    data: np.ndarray | torch.Tensor,
+    message: str = "Data must be 2D.",
+    ) -> None:
+    assert data.ndim == 2, message
+
+# Expands an arg to a range - used for random transforms to define the parameter ranges.
+# E.g. arg=0.1, dim=3 -> (-0.1, 0.1, -0.1, 0.1, -0.1, 0.1) when negate_lower=True, vals_per_dim=2.
+# E.g. arg=(0.8, 1.2), dim=3 -> (0.8, 1.2, 0.8, 1.2, 0.8, 1.2) when negate_lower=False, vals_per_dim=2.
+# Remove between 10-20 voxels from each end of each axis of the image.
+# E.g. arg=(10, 20), dim=3, vals_per_dim=4 -> (10, 20, 10, 20, 10, 20, 10, 20, 10, 20, 10, 20) when negate_lower=False.
+def assert_3d(
+    data: np.ndarray | torch.Tensor,
+    message: str = "Data must be 3D.",
+    ) -> None:
+    assert data.ndim == 3, message
+
+# Expands an arg to the required length based on 'dim'.
 def bubble_args(*inner_fns: Callable) -> Callable:
     if not version(gte='3.9'):
         # Ast unparse is not available in Python < 3.9.
@@ -172,14 +187,14 @@ def bubble_args(*inner_fns: Callable) -> Callable:
 
     return change_outer_fn_sig
 
-# Expands a single arg to a list of that type, e.g. 1 -> [1] if the 'arg' matches one of the 'types'.
-# Converts directly to a list if the 'arg' is one of the 'iter_types'.
 def expand_range_arg(
     arg: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor,
+    check_range: Literal['<', '<=', '>', '>='] | None = None,
     dim: int = 3,   # Could be 2/3 for spatial or 1 for intensity.
     negate_lower: bool = False,
     vals_per_dim: int = 2,
     ) -> Tuple[Number, ...]:
+    # Expand to the full number of args.
     if isinstance(arg, (int, float)):
         arg = (-arg if negate_lower else arg, arg) * (vals_per_dim // 2) * dim
     elif isinstance(arg, (list, tuple, np.ndarray, torch.Tensor)):
@@ -187,10 +202,26 @@ def expand_range_arg(
         if len(arg) == vals_per_dim // 2:
             arg = arg * 2 * dim
         elif len(arg) == vals_per_dim:
-            arg = arg * dim           
+            arg = arg * dim
+
+    # Check ranges within the expanded args.
+    if check_range is not None:
+        range_check_fns = {
+            '<': lambda a, b: a < b,
+            '<=': lambda a, b: a <= b,
+            '>': lambda a, b: a > b,
+            '>=': lambda a, b: a >= b,
+        }
+        range_check_fn = range_check_fns[check_range]
+        pairs_per_dim = vals_per_dim // 2
+        for d in range(dim):
+            for p in range(pairs_per_dim):
+                low = arg[d * vals_per_dim + p * 2]
+                high = arg[d * vals_per_dim + p * 2 + 1]
+                if not range_check_fn(low, high):
+                    raise ValueError(f"Range check '{check_range}' failed for dim {d}, pair {p}: ({low}, {high}).")
     return arg
 
-# Expands an arg to the required length based on 'dim'.
 def get_inner_args(
     outer_fn: Callable,
     inner_fn: Callable,

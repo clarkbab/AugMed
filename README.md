@@ -31,7 +31,7 @@ pipeline = Pipeline([
 ], device=device)
 
 # Transform example CT image.
-ct_t, labels_t, points_t, affines_t = pipeline(ct, labels, points, affine=affine, return_affine=True)
+ct_t, labels_t, points_t, grid_t = pipeline(ct, labels, points, affine=affine, return_grid=True)
 
 # Plot transformed data.
 plot_volume(ct_t, affine=affines_t[0], labels=labels_t, points=points_t)
@@ -79,7 +79,7 @@ In augmed, the `Pipeline` ensures that only a single resampling step is applied.
 Benchmark these optimisations:
 
 - Only the final `SamplingGrid` points are back transformed to the input image - i.e. all `GridTransform` objects are applied first.
-- Grouping input images by `SamplingGrid` and performing `Pipeline` transforms' `backward_transform_points` once to get sample locations in the input image space. Useful when multiple images have same `SamplingGrid`, e.g. CT volume + labels.
+- Grouping input images by `SamplingGrid` and performing `Pipeline` transforms' `back_transform_points` once to get sample locations in the input image space. Useful when multiple images have same `SamplingGrid`, e.g. CT volume + labels.
 - For chained `Affine` transforms, pull out the backward affine matrix (4x4 for 3D) for each transform and collapse these before applying to the sampling points (Nx3 for 3D, with N=6.7e7 for a 512x512x256 volume).
 - Anything else?
 
@@ -88,7 +88,7 @@ Transforms accept images/points of types `torch/np.float32`, `torch/np.float16`,
 
 - Don't need to handle float64 I think.
 - Store affine matrices (and other bits and pieces) as float32 and downcast as necessary based on resolved 'dtype'. Hmm, actually it would be better to instantiate at lower res if possible - based on `dtype` param and `set_dtype` - called from Pipeline.
-- Should probably enforce that all transforms in a Pipeline use the same dtype (if set on Transform, not input) as we'll need to multiple affine chains, for example - and backward_transform_points. Actually, just leave this until it is a problem. Most people will be setting at the Pipeline level I'd say.
+- Should probably enforce that all transforms in a Pipeline use the same dtype (if set on Transform, not input) as we'll need to multiple affine chains, for example - and back_transform_points. Actually, just leave this until it is a problem. Most people will be setting at the Pipeline level I'd say.
 
 #### Frozen transforms
 All `RandomTransform` types offer a `freeze` method that returns a deterministic transform for repeatability - although it is preferable to pass all data to `pipeline()` in a single call to make use of the built-in optimisations. 
@@ -123,4 +123,4 @@ An `IntensityTransform` changes the intensity of voxels/pixels in the image, e.g
 To avoid multiple resampling steps when using `Pipeline`, intensity transforms should be grouped at the start and/or end of the pipeline. This is because intensity transforms require resolving (resampling) of all previous `GridTransform` or `SpatialTransform` objects to determine the intensities passed to `transform_intensities()`.
 
 ### SpatialTransform
-A `SpatialTransform` changes the positions of objects within the image, e.g. rotation, elastic deformation. These transforms implement the `backward_transform_points()` method that accepts and returns a `PointsTensor`.
+A `SpatialTransform` changes the positions of objects within the image, e.g. rotation, elastic deformation. These transforms implement the `back_transform_points()` method that accepts and returns a `PointsTensor`.

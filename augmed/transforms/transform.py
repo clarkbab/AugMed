@@ -2,27 +2,35 @@ import numpy as np
 import torch
 from typing import Any, Dict, List, Literal
 
-from ..typing import AffineMatrix, Image, Indices, Number, Points, SamplingGrid, Size, SpatialDim, TransformParams
-from ..utils.args import alias_kwargs, arg_to_list
+from ..config import get_dim
+from ..typing import AffineMatrix, BatchChannelImage, BatchImage, BatchLabelImage, ChannelImage, Image, Indices, LabelImage, Number, Points, SamplingGrid, Size, SpatialDim, TransformParams
+from ..utils.args import alias_kwargs, arg_default, arg_to_list
+from ..utils.assertions import assert_dim
 from ..utils.conversion import to_return_format
+from ..utils.geometry import spatial_size
+from ..utils.python import get_private_attr, set_private_attr, wrap_quotes
 
-# What is a Transform?
-# Transform defines the API that any (deterministic) Transform
-# and RandomTransform must follow.
-# What about pipeline? Yeah, I guess so. We treat it just like a transform.
+# Superclass of all (random and deterministic) transforms.
 class Transform:
     def __init__(
         self,
         debug: bool = False,
         device: torch.device | Literal['cpu', 'cuda'] | None = None,
-        dim: SpatialDim = 3,
+        dim: SpatialDim | None = None,
+        fill: Number | Literal['border', 'max', 'min', 'reflection', 'zeros'] = 'min',
+        filter_offgrid: bool | SpatialDim | List[SpatialDim] = True,
+        interpolation: Literal['bicubic', 'bilinear', 'nearest'] = 'bilinear',
         verbose: bool = False,
         ) -> None:
-        assert dim in [2, 3], "Only 2D and 3D flips are supported."
-        self._debug = debug
-        self._device = torch.device(device) if isinstance(device, str) else device
-        self._dim = dim
-        self._verbose = verbose
+        dim = arg_default(dim, dim, get_dim())
+        assert_dim(dim)
+        set_private_attr(self, '__debug', debug)
+        set_private_attr(self, '__device', torch.device(device) if isinstance(device, str) else device)
+        set_private_attr(self, '__dim', dim)
+        set_private_attr(self, '__fill', fill)
+        set_private_attr(self, '__filter_offgrid', filter_offgrid)
+        set_private_attr(self, '__interpolation', interpolation)
+        set_private_attr(self, '__verbose', verbose)
     
     def __call__(
         self,
@@ -33,13 +41,21 @@ class Transform:
 
     @property
     def dim(self) -> SpatialDim:
-        return self._dim
+        return get_private_attr(self, '__dim')
 
-    @property
-    def params(self) -> TransformParams:
-        if not hasattr(self, '_params'):
-            raise ValueError("Subclasses of 'Transform' must have '_params' attribute.")
-        return self._params
+    def params(
+        self,
+        **kwargs,
+        ) -> TransformParams:
+        return dict(
+            device=get_private_attr(self, '__device'),
+            **kwargs,
+            dim=get_private_attr(self, '__dim'),
+            fill=get_private_attr(self, '__fill'),
+            filter_offgrid=get_private_attr(self, '__filter_offgrid'),
+            interpolation=get_private_attr(self, '__interpolation'),
+            type=self.__class__.__name__,
+        )
 
     def __repr__(self) -> str:
         return str(self)
@@ -49,45 +65,44 @@ class Transform:
         self,
         debug: bool,
         ) -> None:
-        self._debug = debug
+        set_private_attr(self, '__debug', debug)
 
     # Can be called by Pipeline to set sub-transforms devices.
     def set_device(
         self,
         device: torch.device | Literal['cpu', 'cuda'] | None,
         ) -> None:
-        self._device = torch.device(device) if isinstance(device, str) else device
+        set_private_attr(self, '__device', torch.device(device) if isinstance(device, str) else device)
 
     # Can be called by Pipeline to set sub-transforms dims.
     def set_dim(
         self,
         dim: SpatialDim,
         ) -> None:
-        assert dim in [2, 3], "Only 2D and 3D transforms are supported."
-        self._dim = dim
-
-    # Can be called by all child classes.
-    def set_params(
-        self,
-        type: str,
-        **params: TransformParams,
-        ) -> None:
-        # Put transform type first.
-        self._params = dict(
-            device=self._device,
-            **params,
-            dim=self._dim,
-            type=type,
-        )
+        assert_dim(dim)
+        set_private_attr(self, '__dim', dim)
 
     def __str__(
         self,
         class_name: str,
+        skip_format: str | List[str] | None = None,
+        subtransform: bool = False,
         **params: Any,
         ) -> str:
-        params['device'] = self._device
-        params['dim'] = self._dim
-        return f"{class_name}({', '.join([f'{k}={v}' for k, v in params.items()])})"
+        # Pipeline subtransforms shouldn't show these values as they are ignored,
+        # only the Pipeline-level values are relevant.
+        if not subtransform:
+            params['device'] = wrap_quotes(str(get_private_attr(self, '__device'))) if isinstance(get_private_attr(self, '__device'), torch.device) else get_private_attr(self, '__device')
+            params['dim'] = get_private_attr(self, '__dim')
+            params['fill'] = wrap_quotes(get_private_attr(self, '__fill')) if isinstance(get_private_attr(self, '__fill'), str) else get_private_attr(self, '__fill')
+            params['filter_offgrid'] = get_private_attr(self, '__filter_offgrid')
+            params['interpolation'] = wrap_quotes(get_private_attr(self, '__interpolation'))
+        skip_format = arg_to_list(skip_format, str)
+        def format(k: str, v: Any) -> str:
+            if skip_format is not None and k in skip_format:
+                return f"{k}={v}"
+            return f"{k}={v}"
+        return f"{class_name}({', '.join([format(k, v) for k, v in params.items()])})"
 
     # Originally this was defined as a mixin to avoid having RandomTransforms override the method.
     # However, as a mixin, each new transform class needs to subclass the mixin also, which creates
@@ -95,7 +110,7 @@ class Transform:
     @alias_kwargs(
         ('a', 'affine'),
         ('fo', 'filter_offgrid'),
-        ('ra', 'return_affine'),
+        ('rg', 'return_grid'),
         ('rp', 'return_params'),
         ('s', 'size'),
     )
@@ -109,15 +124,19 @@ class Transform:
     # require SamplingGrid for filtering off-grid points after transforming.
     def transform(
         self,
-        *data: Image | Points | List[Image | Points],
+        *data: Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | Points | List[Image | LabelImage | Points],
         affine: AffineMatrix | None = None,
-        filter_offgrid: bool = True,
-        return_affine: bool = False,
+        fill: Number | Literal['border', 'max', 'min', 'reflection', 'zeros'] | None = None,
+        filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
+        interpolation: Literal['bicubic', 'bilinear', 'nearest'] | None = None,
+        return_grid: bool = False,
         return_filtered: bool = False,
+        return_single: bool = True,
         size: Size | None = None,
-        ) -> Image | Points | List[Image | Points | AffineMatrix | TransformParams]:
-        data, data_was_single = arg_to_list(data, (np.ndarray, torch.Tensor), return_expanded=True)
+        ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | Points | List[Image | LabelImage | Points | AffineMatrix | SamplingGrid | TransformParams]:
+        data, data_was_single = arg_to_list(data, (np.ndarray, torch.Tensor), return_matched=True)
         return_types = [type(d) for d in data]
+        filter_offgrid = filter_offgrid if filter_offgrid is not None else get_private_attr(self, '__filter_offgrid')
 
         # Split points and images.
         image_indices = []
@@ -140,23 +159,23 @@ class Transform:
                 # TODO: Perhaps we should check the transform to see if it needs size.
                 # For example, a Pipeline that only contains intensity transforms doesn't need size.
                 raise ValueError("Size must be provided when filtering off-grid points without images.")
-            size = data[image_indices[0]].shape[-self._dim:]
+            size = spatial_size(data[image_indices[0]], get_private_attr(self, '__dim'))
 
         # Transform images.
         images = [data[i] for i in image_indices]
         if len(images) > 0:
-            results = self.transform_images(images, affine=affine, return_affine=return_affine, return_single=False)
-            if return_affine:
-                *image_ts, affine_t = results
+            results = self.transform_images(images, affine=affine, fill=fill, interpolation=interpolation, return_grid=return_grid, return_single=False)
+            if return_grid:
+                *image_ts, grid_t = results
             else:
                 image_ts = results
         else:
             image_ts = []
 
         # Transform points.
-        pointses = [data[i] for i in points_indices]
-        if len(pointses) > 0:
-            results = self.transform_points(pointses, affine=affine, filter_offgrid=filter_offgrid, return_filtered=return_filtered, return_single=False, size=size)
+        points = [data[i] for i in points_indices]
+        if len(points) > 0:
+            results = self.transform_points(points, affine=affine, filter_offgrid=filter_offgrid, return_filtered=return_filtered, return_single=False, size=size)
             if filter_offgrid and return_filtered:
                 *points_ts, indices = results
             else:
@@ -177,22 +196,20 @@ class Transform:
 
         # Convert to return format.
         other_data = []
-        if return_affine:
-            other_data.append(affine_t)
-        if filter_offgrid and return_filtered and len(pointses) > 0:
+        if return_grid:
+            other_data.append(grid_t)
+        if filter_offgrid and return_filtered and len(points) > 0:
             # Indices could be a tensor or list of tensors for multiple points arrays.
             points_return_types = [return_types[i] for i in points_indices]
             indices = to_return_format(indices, return_single=True, return_types=points_return_types)
             other_data.append(indices)
-        results = to_return_format(data_ts, other_data=other_data, return_single=data_was_single, return_types=return_types)
-
-        return results
+        return to_return_format(data_ts, other_data=other_data, return_single=return_single and data_was_single, return_types=return_types)
 
     def transform_images(
         self,
         *args,
         **kwargs,
-        ) -> Image | List[Image | List[SamplingGrid]]:
+        ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | AffineMatrix | SamplingGrid]:
         raise ValueError("Subclasses of 'Transform' must implement 'transform_images' method.")
 
     def transform_points(
@@ -202,7 +219,6 @@ class Transform:
         ) -> Points | List[Points | Indices]:
         raise ValueError("Subclasses of 'Transform' must implement 'transform_points' method.")
 
-# RandomTransforms should have all the behaviour of a normal transform.
 class RandomTransform(Transform):
     def __init__(
         self,
@@ -211,46 +227,54 @@ class RandomTransform(Transform):
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
-        self._p = p
+        set_private_attr(self, '__p', p)
         self.set_seed(seed)
 
     def freeze(
         self,
         klass: 'Object',
         params: Dict[str, Any],
-        ) -> None:
+        ) -> Transform:
         # Copy general params from random -> frozen transform. I always forget these.
-        params['debug'] = self._debug
-        params['device'] = self._device
-        params['dim'] = self._dim
+        params['debug'] = get_private_attr(self, '__debug')
+        params['device'] = get_private_attr(self, '__device')
+        params['dim'] = get_private_attr(self, '__dim')
         return klass(**params)
 
-    def set_params(
+    def params(
         self,
-        *args,
-        **params: TransformParams,
-        ) -> None:
-        super().set_params(*args, p=self._p, **params)
+        **kwargs,
+        ) -> TransformParams:
+        return super().params(p=get_private_attr(self, '__p'), **kwargs)
 
+    # Can be called by Pipeline to set sub-transforms random seeds.
     def set_seed(
         self,
         seed: int | None = None,
         ) -> None:
-        self._rng = np.random.default_rng(seed=seed)
+        set_private_attr(self, '__seed', seed)
+        set_private_attr(self, '__rng', np.random.default_rng(seed=seed))
 
     def __str__(
         self,
         class_name: str,
+        subtransform: bool = False,
         **params: Any,
         ) -> str:
-        return super().__str__(class_name, p=self._p, **params)
+        return super().__str__(
+            class_name,
+            **params,
+            p=get_private_attr(self, '__p'),
+            seed=get_private_attr(self, '__seed'),
+            subtransform=subtransform,
+        )
 
     def transform(
         self,
         *args,
         return_params: bool = False,
         **kwargs,
-        ) -> Image | Points | List[Image | Points | List[SamplingGrid] | TransformParams]:
+        ) -> Image | LabelImage | Points | List[Image | LabelImage | Points | List[SamplingGrid] | TransformParams]:
         # Delegate to frozen transform.
         t_frozen = self.freeze()
         results = t_frozen.transform(*args, **kwargs)
@@ -260,16 +284,17 @@ class RandomTransform(Transform):
         other_data = []
         if return_params:
             other_data.append(t_frozen.params)
-        results = to_return_format(results, other_data=other_data, return_single=results_is_single)
-        
-        return results
+        return to_return_format(results, other_data=other_data, return_single=results_is_single)
 
+    @alias_kwargs(
+        ('rp', 'return_params'),
+    )
     def transform_images(
         self,
         *args,
         return_params: bool = False,
         **kwargs,
-        ) -> Image | List[Image | List[SamplingGrid] | TransformParams]:
+        ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | SamplingGrid | TransformParams]:
         # Delegate to frozen transform.
         t_frozen = self.freeze()
         results = t_frozen.transform_images(*args, **kwargs)
@@ -279,10 +304,11 @@ class RandomTransform(Transform):
         other_data = []
         if return_params:
             other_data.append(t_frozen.params)
-        results = to_return_format(results, other_data=other_data, return_single=results_is_single)
-        
-        return results
+        return to_return_format(results, other_data=other_data, return_single=results_is_single)
 
+    @alias_kwargs(
+        ('rp', 'return_params'),
+    )
     def transform_points(
         self,
         *args,
@@ -298,6 +324,5 @@ class RandomTransform(Transform):
         other_data = []
         if return_params:
             other_data.append(t_frozen.params)
-        results = to_return_format(results, other_data=other_data, return_single=results_is_single)
-        return results
+        return to_return_format(results, other_data=other_data, return_single=results_is_single)
     

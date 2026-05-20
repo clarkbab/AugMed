@@ -41,7 +41,7 @@ def load_numpy(
         data = data[0] if len(data) == 1 else data
     return data
 
-# JSON/YAML don't know how to serialize tensors, so we need to convert them to lists first.
+# JSON/YAML don't know how to serialize tensors/arrays, so we need to convert them to lists first.
 def make_serialisable(
     param: Any,
     ) -> Any:
@@ -51,15 +51,21 @@ def make_serialisable(
         return [make_serialisable(v) for v in param]
     elif isinstance(param, tuple):
         return tuple(make_serialisable(v) for v in param)
+    elif isinstance(param, torch.device):
+        return str(param)
     elif isinstance(param, torch.Tensor):
         return param.detach().cpu().tolist()
+    elif isinstance(param, np.ndarray):
+        return param.tolist()
+    elif isinstance(param, (np.integer, np.floating, np.bool_)):
+        return param.item()
     else:
         return param
 
 def save_json(
     data: Any,
     filepath: FilePath,
-    overwrite: bool = True,
+    overwrite: bool = False,
     ) -> None:
     if os.path.exists(filepath) and not overwrite:
         raise ValueError(f"File '{filepath}' already exists, use overwrite=True.")
@@ -68,6 +74,15 @@ def save_json(
     if filepath.endswith('.json'):
         with open(filepath, 'w') as f:
             json.dump(data, f, indent=4)
-    elif filepath.endswith('.yaml') or filepath.endswith('.yml'):
-        with open(filepath, 'w') as f:
-            yaml.dump(data, f)
+
+def save_yaml(
+    data: Any,
+    filepath: FilePath,
+    overwrite: bool = False,
+    ) -> None:
+    if os.path.exists(filepath) and not overwrite:
+        raise ValueError(f"File '{filepath}' already exists, use overwrite=True.")
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    data = make_serialisable(data)
+    with open(filepath, 'w') as f:
+        yaml.dump(data, f)
