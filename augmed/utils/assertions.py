@@ -1,8 +1,8 @@
 import numpy as np
 import torch
-from typing import List
+from typing import List, Tuple
 
-from ..typing import BatchChannelImage, BatchImage, BatchLabelImage, ChannelImage, Image, LabelImage, Orientation, Orientation2D, Orientation3D, Points, Size, SpatialDim
+from ..typing import BatchChannelImage, BatchImage, BatchLabelImage, ChannelImage, Image, LabelImage, Number, Orientation, Orientation2D, Orientation3D, Points, Size, SpatialDim
 from .args import arg_to_list
 
 def assert_dim(
@@ -87,3 +87,14 @@ def assert_points_shapes(
             raise ValueError(f"Expected points to have 2 dimensions - shape=(N, {dim}), got {p.ndim} dimensions - shape={p.shape} for points {i}.")
         if p.shape[-1] != dim:
             raise ValueError(f"Expected points to be {dim}D spatial, got {p.shape[-1]}D - shape={p.shape} for points {i}. Set 'dim' param if {dim}D spatial is not correct.")
+
+def assert_range(
+    arg: Tuple[Number],
+    dim: SpatialDim,
+    name: str,
+    n_vals_per_dim: int = 2,
+    ) -> None:
+    expected_length = dim * n_vals_per_dim
+    if len(arg) != expected_length:
+        raise ValueError(f"Got '{name}' of length {len(arg)}, expected length {expected_length} for {dim}D spatial. Set 'dim' param if {dim}D spatial is not correct.")
+    

@@ -8,6 +8,7 @@ LAZY_IMPORTS = {
     'gaussian_noise': ['GaussianNoise', 'RandomGaussianNoise'],
     'intensity': ['IntensityTransform', 'RandomIntensityTransform'],
     'min_max': ['MinMax', 'RandomMinMax'],
+    'hist_eq': ['HistEq'],
     'normalise': ['Normalise', 'RandomNormalise'],
     'standardise': ['RandomStandardise', 'Standardise'],
     'threshold': ['RandomThreshold', 'Threshold'],

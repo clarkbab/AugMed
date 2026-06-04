@@ -16,6 +16,7 @@ dependencies = [
     "numpy",
     "pyyaml",
     "torch",
+    "scikit-image",
 ]
 
 [project.urls]

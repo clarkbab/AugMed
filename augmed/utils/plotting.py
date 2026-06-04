@@ -214,11 +214,13 @@ def plot_hist(
         return ax
 
 @alias_kwargs(
+    ('a', 'affine'),
     ('b', 'box'),
     ('c', 'crop'),
     ('cm', 'crop_margin'),
     ('l', 'labels'),
     ('ln', 'label_names'),
+    ('o', 'orientation'),
     ('p', 'points'),
     ('sl', 'show_labels'),
     ('spn', 'show_point_names'),
@@ -246,6 +248,7 @@ def plot_slice(
     show_point_idxs: bool = False,
     show_point_names: bool = False,
     title: str | None = None,
+    title_fontsize: float = 10,
     use_image_coords: bool = False,
     vmin: Number | None = None,
     vmax: Number | None = None,
@@ -256,7 +259,7 @@ def plot_slice(
     if data is None:
         assert labels is not None, "Labels must be provided if data is None."
         data = np.zeros(labels.shape[-2:])
-    orientation = arg_default(orientation, orientation, get_orientation())
+    orientation = arg_default(orientation, orientation, get_orientation(2))
 
     # Convert inputs to numpy.
     data = to_numpy(data)
@@ -379,7 +382,7 @@ def plot_slice(
 
     # Add text.
     if title is not None:
-        axs[0].set_title(title)
+        axs[0].set_title(title, fontsize=title_fontsize)
     if x_label is not None:
         axs[0].set_xlabel(x_label)
     if y_label is not None:
@@ -438,6 +441,7 @@ def plot_volume(
     show_point_names: bool = False,
     show_points: bool = True,
     show_title: bool = True,
+    title_fontsize: float = 10,
     use_image_coords: bool = False,
     view: View | List[View] | Literal['all'] = 'all',
     vmin: float | None = None,
@@ -447,7 +451,7 @@ def plot_volume(
     if data is None:
         assert labels is not None, "Labels must be provided if data is None."
         data = np.zeros(labels.shape[-3:])
-    orientation = arg_default(orientation, orientation, get_orientation())
+    orientation = arg_default(orientation, orientation, get_orientation(3))
 
     # Convert inputs to numpy.
     data = to_numpy(data)
@@ -624,7 +628,7 @@ def plot_volume(
                 o = affine_origin(affine)
                 world_pos = resolved_idx * s[v] + o[v]
                 title += f' ({world_pos:.1f}mm)'
-            col_ax.set_title(title)
+            col_ax.set_title(title, fontsize=title_fontsize)
 
         # Hide spines.
         for p in ['right', 'top', 'bottom', 'left']:

@@ -53,9 +53,9 @@ class Scale(Affine):
         ) -> str:
         return super().super_str(
             self.__class__.__name__,
-            scaling=to_tuple(self.__scaling, dp=3),
             centre=to_tuple(self.__scaling_centre, dp=3) if self.__scaling_centre != 'image-centre' else wrap_quotes('image-centre'),
             centre_offset=to_tuple(self.__scaling_centre_offset, dp=3),
+            scaling=to_tuple(self.__scaling, dp=3),
             subtransform=subtransform,
         )
 
@@ -116,8 +116,8 @@ class RandomScale(RandomAffine):
         ) -> str:
         return super().super_str(
             self.__class__.__name__,
-            scaling=to_tuple(self.__scaling, dp=3),
             centre=to_tuple(self.__scaling_centre, dp=3) if self.__scaling_centre != 'image-centre' else wrap_quotes('image-centre'),
             centre_offset=to_tuple(self.__scaling_centre_offset, dp=3),
+            scaling=to_tuple(self.__scaling, dp=3),
             subtransform=subtransform,
         )

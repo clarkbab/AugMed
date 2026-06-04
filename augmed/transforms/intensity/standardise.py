@@ -4,6 +4,7 @@ from typing import Tuple
 
 from ...typing import ImageTensor, Number, SpatialDim, TransformParams
 from ...utils.args import alias_kwargs, expand_range_arg
+from ...utils.assertions import assert_range
 from ...utils.conversion import to_tensor, to_tuple
 from ...utils.maths import round
 from ..identity import Identity
@@ -84,10 +85,10 @@ class RandomStandardise(RandomIntensityTransform):
     def __expand_range_args(self) -> None:
         dim = 1    # Dim=1 for all intensity transforms.
         mean_range = expand_range_arg(self.__mean, dim=dim, negate_lower=True)
-        assert len(mean_range) == 2 * dim, f"Expected 'mean' of length {2 * dim}, got {len(mean_range)}."
+        assert_range(mean_range, dim, 'mean')
         self.__mean_range = to_tensor(mean_range)
         std_range = expand_range_arg(self.__std, dim=dim)
-        assert len(std_range) == 2 * dim, f"Expected 'std' of length {2 * dim}, got {len(std_range)}."
+        assert_range(std_range, dim, 'std')
         self.__std_range = to_tensor(std_range)
 
     def freeze(self) -> Standardise | Identity:

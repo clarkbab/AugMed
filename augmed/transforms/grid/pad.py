@@ -6,7 +6,7 @@ from typing import List, Literal, Tuple
 
 from ...typing import AffineMatrix, Indices, Number, Points, SamplingGridTensor, Size, SpatialDim, TransformParams
 from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg
-from ...utils.assertions import assert_points_shapes
+from ...utils.assertions import assert_points_shapes, assert_range
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
 from ...utils.geometry import affine_spacing, create_affine, fov, fov_centre, to_world_coords
 from ...utils.python import get_group_device, wrap_quotes
@@ -134,7 +134,6 @@ class Pad(GridTransform):
         ('a', 'affine'),
         ('fo', 'filter_offgrid'),
         ('rf', 'return_filtered'),
-        ('rs', 'return_single'),
         ('s', 'size'),
     )
     def transform_points(
@@ -145,12 +144,11 @@ class Pad(GridTransform):
         filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
-        return_single: bool = True,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
         ) -> Points | List[Points | Indices | List[Indices]]:
         assert_points_shapes(points)
-        points, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_matched=True)
+        points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=self.__device)
         return_types = [type(p) for p in points]
         points = [to_tensor(p, device=device, dtype=torch.float32) for p in points]
@@ -188,9 +186,9 @@ class Pad(GridTransform):
         # Convert to return format.
         other_data = []
         if filter_offgrid and return_filtered:
-            indiceses = to_return_format(indiceses, return_single=True, return_types=return_types)
+            indiceses = to_return_format(indiceses, return_types=return_types)
             other_data.append(indiceses)
-        return to_return_format(points_ts, other_data=other_data, return_single=return_single and points_was_single, return_types=return_types)
+        return to_return_format(points_ts, other_data=other_data, return_types=return_types)
 
 class RandomPad(RandomGridTransform):
     @alias_kwargs(
@@ -232,7 +230,7 @@ class RandomPad(RandomGridTransform):
         if self.__add is not None:
             cr_vals_per_dim = 4
             add_range = expand_range_arg(self.__add, dim=self.__dim, vals_per_dim=cr_vals_per_dim)
-            assert len(add_range) == cr_vals_per_dim * self.__dim, f"Expected 'add' of length {cr_vals_per_dim * self.__dim}, got {len(add_range)}."
+            assert_range(add_range, self.__dim, 'add', n_vals_per_dim=cr_vals_per_dim)
             for i, s in enumerate(symmetric):
                 cr_axis_vals = add_range[i * cr_vals_per_dim:(i + 1) * cr_vals_per_dim]
                 if s and (cr_axis_vals[0] != cr_axis_vals[2] or cr_axis_vals[1] != cr_axis_vals[3]):
@@ -241,14 +239,14 @@ class RandomPad(RandomGridTransform):
         else:
             cmr_vals_per_dim = 4
             margin_range = expand_range_arg(self.__margin, dim=self.__dim, vals_per_dim=cmr_vals_per_dim)
-            assert len(margin_range) == cmr_vals_per_dim * self.__dim, f"Expected 'margin' of length {cmr_vals_per_dim * self.__dim}, got {len(margin_range)}."
+            assert_range(margin_range, self.__dim, 'margin', n_vals_per_dim=cmr_vals_per_dim)
             for i, s in enumerate(symmetric):
                 cmr_axis_vals = margin_range[i * cmr_vals_per_dim:(i + 1) * cmr_vals_per_dim]
                 if s and (cmr_axis_vals[0] != cmr_axis_vals[2] or cmr_axis_vals[1] != cmr_axis_vals[3]):
                     raise ValueError(f"Cannot create symmetric pads for axis {i} with pad margin ranges {cmr_axis_vals}.")
             margin_range = to_tensor(margin_range).reshape(self.__dim, 2, 2).permute(2, 1, 0)
             centre_offset_range = expand_range_arg(self.__centre_offset, dim=self.__dim, negate_lower=True)
-            assert len(centre_offset_range) == 2 * self.__dim, f"Expected 'centre_offset' of length {2 * self.__dim}, got {len(centre_offset_range)}."
+            assert_range(centre_offset_range, self.__dim, 'centre_offset')
             centre_offset_range = to_tensor(centre_offset_range).reshape(self.__dim, 2).T
         self.__add_range = add_range
         self.__margin_range = margin_range

@@ -37,8 +37,13 @@ def load_numpy(
     data = np.load(filepath)
     if filepath.endswith('.npz'):
         keys = arg_to_list(keys, str)
-        data = [data[k] for k in keys]
-        data = data[0] if len(data) == 1 else data
+        items = []
+        for k in keys:
+            try:
+                items.append(data[k])
+            except KeyError as e:
+                raise KeyError(f"Key '{k}' not found in .npz file. Available keys are: {list(data.keys())}. Filepath: '{filepath}'.")
+        data = items[0] if len(items) == 1 else items
     return data
 
 # JSON/YAML don't know how to serialize tensors/arrays, so we need to convert them to lists first.
@@ -65,7 +70,7 @@ def make_serialisable(
 def save_json(
     data: Any,
     filepath: FilePath,
-    overwrite: bool = False,
+    overwrite: bool = True,
     ) -> None:
     if os.path.exists(filepath) and not overwrite:
         raise ValueError(f"File '{filepath}' already exists, use overwrite=True.")
@@ -78,7 +83,7 @@ def save_json(
 def save_yaml(
     data: Any,
     filepath: FilePath,
-    overwrite: bool = False,
+    overwrite: bool = True,
     ) -> None:
     if os.path.exists(filepath) and not overwrite:
         raise ValueError(f"File '{filepath}' already exists, use overwrite=True.")

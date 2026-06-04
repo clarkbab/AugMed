@@ -73,20 +73,18 @@ def alias_kwargs(
         return wrapper
     return decorator
 
-# Checks if 'arg' matches any of the specified types and ensures that the outpu
-# is a list of this type - e.g. converts a single str to a List[str].
 def arg_to_list(
     arg: Any | None,
-    types: Any | List[Any],
-    broadcast: int = 1,             # Expand a list of length 1 to length 'broadcast'.
-    literals: Dict[Any, List[Any]] | None = None,   # Some args (e.g. 'all') should behave differently.
-    out_type: Any | None = None,    # Ensure that the output list of type 'out_type'.
-    return_matched: bool = False,   # Returns whether 'arg' matched any 'types'.
-    ) -> List[Any] | Any:
+    types: Any | List[Any],     # Check if 'arg' matches any of these types.
+    broadcast: int = 1,         # Expand a match to multiple elements, e.g. None -> [None, None, None].
+    literals: Dict[Any, List[Any]] | None = None,   # Check if 'arg' matches any of these literal values.
+    out_type: Any | None = None,    # Convert a match to a different output type.
+    return_matched: bool = False,   # If arg matched 'types' or 'literals' then return True.
+    ) -> List[Any] | Tuple[List[Any], bool]:
     # Convert types to list.
     if not isinstance(types, list) and not isinstance(types, tuple):
         types = [types]
-    
+
     # Check literal matches.
     if literals is not None:
         for k, v in literals.items():
@@ -100,9 +98,8 @@ def arg_to_list(
                     arg = arg()
 
                 if return_matched:
-                    return arg, False
-                else:
-                    return arg
+                    return arg, True
+                return arg
 
     # Check types.
     matched = False
@@ -111,15 +108,14 @@ def arg_to_list(
             matched = True
             arg = [arg] * broadcast
             break
-        
+
     # Convert to output type.
     if matched and out_type is not None:
         arg = [out_type(a) for a in arg]
 
     if return_matched:
         return arg, matched
-    else:
-        return arg
+    return arg
 
 def assert_2d(
     data: np.ndarray | torch.Tensor,

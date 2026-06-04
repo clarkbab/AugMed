@@ -33,19 +33,17 @@ class Identity(Transform):
     @alias_kwargs(
         ('a', 'affine'),
         ('rg', 'return_grid'),
-        ('rs', 'return_single'),
     )
     def transform_images(
         self,
         images: Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage],
         affine: AffineMatrix | None = None,
         return_grid: bool = False,
-        return_single: bool = True,
         **kwargs,
         ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | AffineMatrix | SamplingGrid]:
         assert_image_shapes(images, self.__dim)
         assert_image_sizes(images, self.__dim)
-        images, images_was_single = arg_to_list(images, (np.ndarray, torch.Tensor), return_matched=True)
+        images = arg_to_list(images, (np.ndarray, torch.Tensor))
         return_types = [type(i) for i in images]
         device = get_group_device(images, device=self.__device)
         images = [to_tensor(i, device=device) for i in images]
@@ -65,7 +63,7 @@ class Identity(Transform):
         if return_grid:
             grid_t = (spatial_size(images[0], self.__dim), affine)
             other_data.append(grid_t)
-        return to_return_format(images, other_data=other_data, return_single=return_single and images_was_single, return_types=return_types)
+        return to_return_format(images, other_data=other_data, return_types=return_types)
 
     # When a transform has a '_device' all input data will be moved to (and returned on) that device
     @alias_kwargs(
@@ -77,11 +75,10 @@ class Identity(Transform):
         points: Points | List[Points],
         filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
         return_filtered: bool = False,
-        return_single: bool = True,
         **kwargs,
         ) -> Points | List[Points | Indices | List[Indices]]:
         assert_points_shapes(points, self.__dim)
-        points, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_matched=True)
+        points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=self.__device)
         return_types = [type(p) for p in points]
         points = [to_tensor(p, device=device, dtype=torch.float32) for p in points]
@@ -89,6 +86,6 @@ class Identity(Transform):
         other_data = []
         if filter_offgrid and return_filtered:
             indiceses = [to_tensor([], device=device, dtype=torch.int32) for _ in points]
-            indiceses = to_return_format(indiceses, return_single=True, return_types=return_types)
+            indiceses = to_return_format(indiceses, return_types=return_types)
             other_data.append(indiceses)
-        return to_return_format(points, other_data=other_data, return_single=return_single and points_was_single, return_types=return_types)
+        return to_return_format(points, other_data=other_data, return_types=return_types)

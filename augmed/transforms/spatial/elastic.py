@@ -6,7 +6,7 @@ from typing import List, Literal, Tuple
 
 from ...typing import AffineMatrix, AffineMatrixTensor, ChannelImageTensor, Indices, Number, Points, PointsTensor, Size, SpatialDim, TransformParams
 from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg
-from ...utils.assertions import assert_points_shapes
+from ...utils.assertions import assert_points_shapes, assert_range
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
 from ...utils.geometry import affine_origin, affine_spacing, create_affine, fov
 from ...utils.logging import logger
@@ -53,7 +53,7 @@ class Elastic(SpatialTransform):
         assert len(self.__control_origin) == self.__dim, f"Expected 'control_origin' of length '{self.__dim}' for dim={self.__dim}, got {len(self.__control_origin)}."
         # Disps aren't known until presented with the image.
         disp_range = expand_range_arg(displacement, dim=self.__dim, negate_lower=True)
-        assert len(disp_range) == 2 * self.__dim, f"Expected 'displacement' of length {2 * self.__dim}, got {len(disp_range)}."
+        assert_range(disp_range, self.__dim, 'displacement')
         self.__disp_range = to_tensor(disp_range).reshape(self.__dim, 2).T
         self.__seed = seed
         self.__use_batching = use_batching
@@ -366,7 +366,6 @@ class Elastic(SpatialTransform):
         ('a', 'affine'),
         ('fo', 'filter_offgrid'),
         ('rf', 'return_filtered'),
-        ('rs', 'return_single'),
         ('s', 'size'),
     )
     def transform_points(
@@ -376,12 +375,11 @@ class Elastic(SpatialTransform):
         filter_offgrid: bool | None = None,
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
-        return_single: bool = True,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
         ) -> Points | List[Points | Indices | List[Indices]]:
         assert_points_shapes(points, self.__dim)
-        points, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_matched=True)
+        points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=self.__device)
         return_types = [type(p) for p in points]
         points = [to_tensor(p, device=device) for p in points]
@@ -445,9 +443,9 @@ class Elastic(SpatialTransform):
         # Convert to return format.
         other_data = []
         if filter_offgrid and return_filtered:
-            indiceses = to_return_format(indiceses, return_single=False, return_types=return_types)
+            indiceses = to_return_format(indiceses, return_types=return_types)
             other_data.append(indiceses)
-        return to_return_format(points_ts, other_data=other_data, return_single=return_single and points_was_single, return_types=return_types)
+        return to_return_format(points_ts, other_data=other_data, return_types=return_types)
 
     def __warn_folding(self, control_spacing: torch.Tensor | None = None) -> None:
         if control_spacing is None:
@@ -492,13 +490,13 @@ class RandomElastic(RandomSpatialTransform):
 
     def __expand_range_args(self) -> None:
         control_spacing_range = expand_range_arg(self.__control_spacing, dim=self.__dim)
-        assert len(control_spacing_range) == 2 * self.__dim, f"Expected 'control_spacing' of length {2 * self.__dim}, got {len(control_spacing_range)}."
+        assert_range(control_spacing_range, self.__dim, 'control_spacing')
         self.__control_spacing_range = to_tensor(control_spacing_range).reshape(self.__dim, 2).T
         control_origin_range = expand_range_arg(self.__control_origin, dim=self.__dim, negate_lower=True)
-        assert len(control_origin_range) == 2 * self.__dim, f"Expected 'control_origin' of length {2 * self.__dim}, got {len(control_origin_range)}."
+        assert_range(control_origin_range, self.__dim, 'control_origin')
         self.__control_origin_range = to_tensor(control_origin_range).reshape(self.__dim, 2).T
         disp_range = expand_range_arg(self.__displacement, dim=self.__dim, negate_lower=True)
-        assert len(disp_range) == 2 * self.__dim, f"Expected 'displacement' of length {2 * self.__dim}, got {len(disp_range)}."
+        assert_range(disp_range, self.__dim, 'displacement')
         self.__displacement_range = to_tensor(disp_range).reshape(self.__dim, 2).T
 
     def freeze(self) -> Elastic | Identity:

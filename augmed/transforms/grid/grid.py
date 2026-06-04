@@ -32,7 +32,6 @@ class GridTransform(Transform):
         ('f', 'fill'),
         ('i', 'interpolation'),
         ('rg', 'return_grid'),
-        ('rs', 'return_single'),
     )
     def transform_images(
         self,
@@ -41,11 +40,10 @@ class GridTransform(Transform):
         fill: Number | Literal['border', 'max', 'min', 'reflection', 'zeros'] | None = None,
         interpolation: Literal['bicubic', 'bilinear', 'nearest'] | None = None,
         return_grid: bool = False,
-        return_single: bool = True,
         ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | Tuple[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | AffineMatrix | SamplingGridTensor]:
         assert_image_shapes(images, self.__dim)
         assert_image_sizes(images, self.__dim)
-        images, images_was_single = arg_to_list(images, (np.ndarray, torch.Tensor), return_matched=True)
+        images = arg_to_list(images, (np.ndarray, torch.Tensor))
         device = get_group_device(images, device=get_private_attr(self, '__device'))
         return_types = [type(i) for i in images]
         images = [to_tensor(i, device=device) for i in images]
@@ -82,23 +80,22 @@ class GridTransform(Transform):
         other_data = []
         if return_grid:
             other_data.append(grid_t)
-        return to_return_format(image_ts, other_data=other_data, return_single=return_single and images_was_single, return_types=return_types)
+        return to_return_format(image_ts, other_data=other_data, return_types=return_types)
 
     @alias_kwargs(
         ('fo', 'filter_offgrid'),
         ('rf', 'return_filtered'),
-        ('rs', 'return_single'),
+        ('s', 'size'),
     )
     def transform_points(
         self,
         points: Points | List[Points],
         filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
         return_filtered: bool = False,
-        return_single: bool = True,
         **kwargs,  # Allows them to pass kwargs that work for other transforms, e.g. 'affine'.
         ) -> Points | List[Points | Indices | List[Indices]]:
         assert_points_shapes(points, self.__dim)
-        points, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_matched=True)
+        points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=get_private_attr(self, '__device'))
         return_types = [type(p) for p in points]
         points = [to_tensor(p, device=device) for p in points]
@@ -106,9 +103,9 @@ class GridTransform(Transform):
         other_data = []
         if filter_offgrid and return_filtered:
             indiceses = [to_tensor([], device=device, dtype=torch.int32) for _ in points]
-            indiceses = to_return_format(indiceses, return_single=False, return_types=return_types)
+            indiceses = to_return_format(indiceses, return_types=return_types)
             other_data.append(indiceses)
-        return to_return_format(points, other_data=other_data, return_single=return_single and points_was_single, return_types=return_types)
+        return to_return_format(points, other_data=other_data, return_types=return_types)
 
 class RandomGridTransform(RandomTransform, GridTransform):
     def __init__(

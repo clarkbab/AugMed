@@ -33,6 +33,10 @@ Notes
   earlier character offsets.
 - Append ``# skip_sort`` to a kwarg line to pin it at its current
   position; the remaining kwargs are sorted around it.
+- Place ``# linter:nosort`` on the line immediately before a function
+  call to skip sorting that call's kwargs entirely.
+- Place ``# linter:nosort`` on the line immediately before a ``def``
+  (or its first decorator) to skip all calls within that function body.
 """
 
 import argparse
@@ -82,6 +86,8 @@ def _find_unsorted_calls(source: str) -> List[Tuple[ast.Call, List[ast.keyword],
         return []
 
     skip_lines = _get_skip_sort_lines(source)
+    nosortkwargs_lines = _get_nosortkwargs_lines(source)
+    nosort_ranges = _get_nosort_func_ranges(tree, nosortkwargs_lines)
 
     results = []
     for node in ast.walk(tree):
@@ -89,6 +95,14 @@ def _find_unsorted_calls(source: str) -> List[Tuple[ast.Call, List[ast.keyword],
             continue
         named = [kw for kw in node.keywords if kw.arg is not None]
         if len(named) < 2:
+            continue
+
+        # Skip if the preceding line carries # nosortkwargs.
+        if node.lineno - 1 in nosortkwargs_lines:
+            continue
+
+        # Skip if inside a function/method marked with # nosortkwargs.
+        if any(start <= node.lineno <= end for start, end in nosort_ranges):
             continue
 
         # Determine which indices are pinned (skip_sort).
@@ -113,6 +127,29 @@ def _find_unsorted_calls(source: str) -> List[Tuple[ast.Call, List[ast.keyword],
     # Sort by source position (earliest first); we reverse later for safe editing.
     results.sort(key=lambda pair: (pair[1][0].lineno, pair[1][0].col_offset))
     return results
+
+
+def _get_nosort_func_ranges(tree: ast.AST, nosortkwargs_lines: set) -> List[Tuple[int, int]]:
+    """Return ``(start_line, end_line)`` ranges for functions preceded by ``# linter:nosort``."""
+    ranges = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        first_line = node.decorator_list[0].lineno if node.decorator_list else node.lineno
+        if first_line - 1 in nosortkwargs_lines:
+            ranges.append((node.lineno, node.end_lineno))
+    return ranges
+
+
+def _get_nosortkwargs_lines(source: str) -> set:
+    """Return the set of 1-based line numbers that contain a ``# linter:nosort`` comment."""
+    lines = set()
+    for i, line in enumerate(source.splitlines(), 1):
+        stripped = line.rstrip()
+        idx = stripped.find('#')
+        if idx != -1 and 'linter:nosort' in stripped[idx:]:
+            lines.add(i)
+    return lines
 
 
 def _get_skip_sort_lines(source: str) -> set:

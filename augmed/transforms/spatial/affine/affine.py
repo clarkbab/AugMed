@@ -7,7 +7,7 @@ from typing import List, Literal, Tuple
 
 from ....typing import AffineMatrix, AffineMatrixTensor, Indices, Number, Point, Points, PointsTensor, SamplingGrid, Size, SpatialDim, TransformParams
 from ....utils.args import alias_kwargs, arg_default, arg_to_list, expand_range_arg
-from ....utils.assertions import assert_points_shapes
+from ....utils.assertions import assert_points_shapes, assert_range
 from ....utils.conversion import to_return_format, to_tensor, to_tuple
 from ....utils.geometry import create_affine, fov, fov_centre, fov_width
 from ....utils.matrix import create_rotation, create_scaling, create_translation
@@ -315,7 +315,6 @@ class Affine(SpatialTransform):
         ('a', 'affine'),
         ('fo', 'filter_offgrid'),
         ('rf', 'return_filtered'),
-        ('rs', 'return_single'),
         ('s', 'size'),
     )
     def transform_points(
@@ -325,12 +324,11 @@ class Affine(SpatialTransform):
         filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,  # Filter off-grid points, or those that are off-grid along a certain axis.
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
-        return_single: bool = True,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
         ) -> Points | List[Points | Indices | List[Indices]]:
         assert_points_shapes(points, get_private_attr(self, '__dim'))
-        points, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_matched=True)
+        points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=get_private_attr(self, '__device'))
         return_types = [type(p) for p in points]
         points = [to_tensor(p, device=device, dtype=torch.float32) for p in points]
@@ -370,9 +368,9 @@ class Affine(SpatialTransform):
         # Convert to return format.
         other_data = []
         if filter_offgrid and return_filtered:
-            indiceses = to_return_format(indiceses, return_single=True, return_types=return_types)
+            indiceses = to_return_format(indiceses, return_types=return_types)
             other_data.append(indiceses)
-        return to_return_format(points_ts, other_data=other_data, return_single=return_single and points_was_single, return_types=return_types)
+        return to_return_format(points_ts, other_data=other_data, return_types=return_types)
 
 class RandomAffine(RandomSpatialTransform):
     @alias_kwargs(
@@ -392,7 +390,7 @@ class RandomAffine(RandomSpatialTransform):
         rotation_centre_offset: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 0.0,
         scaling: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = DEFAULT_SCALING_RANGE,
         scaling_centre: Point | Literal['image-centre'] = 'image-centre',
-        scaling_centre_offset: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = None,
+        scaling_centre_offset: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 0.0,
         translation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = None,
         translation_p: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = None,
         **kwargs,
@@ -412,30 +410,30 @@ class RandomAffine(RandomSpatialTransform):
 
     def __expand_range_args(self) -> None:
         dim = get_private_attr(self, '__dim')
-        rotation_centre_offset_range = rotation_range = scaling_centre_offset_range = scaling_range = translation_range = None
+        rotation_centre_offset_range = rotation_range = scaling_centre_offset_range = scaling_range = translation_range = translation_p_range = None
         if get_private_attr(self, '__rotation') is not None:
             rotation_range = expand_range_arg(get_private_attr(self, '__rotation'), dim=dim, negate_lower=True)
-            assert len(rotation_range) == 2 * dim, f"Expected 'rotation' of length {2 * dim}, got {len(rotation_range)}."
+            assert_range(rotation_range, dim, 'rotation')
             rotation_range = to_tensor(rotation_range).reshape(dim, 2).T
         if get_private_attr(self, '__rotation_centre_offset') is not None:
             rotation_centre_offset_range = expand_range_arg(get_private_attr(self, '__rotation_centre_offset'), dim=dim, negate_lower=True)
-            assert len(rotation_centre_offset_range) == 2 * dim, f"Expected 'rotation_centre_offset' of length {2 * dim}, got {len(rotation_centre_offset_range)}."
+            assert_range(rotation_centre_offset_range, dim, 'rotation_centre_offset')
             rotation_centre_offset_range = to_tensor(rotation_centre_offset_range).reshape(dim, 2).T
         if get_private_attr(self, '__scaling') is not None:
             scaling_range = expand_range_arg(get_private_attr(self, '__scaling'), dim=dim, negate_lower=False)
-            assert len(scaling_range) == 2 * dim, f"Expected 'scaling' of length {2 * dim}, got {len(scaling_range)}."
+            assert_range(scaling_range, dim, 'scaling')
             scaling_range = to_tensor(scaling_range).reshape(dim, 2).T
         if get_private_attr(self, '__scaling_centre_offset') is not None:
             scaling_centre_offset_range = expand_range_arg(get_private_attr(self, '__scaling_centre_offset'), dim=dim, negate_lower=True)
-            assert len(scaling_centre_offset_range) == 2 * dim, f"Expected 'scaling_centre_offset' of length {2 * dim}, got {len(scaling_centre_offset_range)}."
+            assert_range(scaling_centre_offset_range, dim, 'scaling_centre_offset')
             scaling_centre_offset_range = to_tensor(scaling_centre_offset_range).reshape(dim, 2).T
         if get_private_attr(self, '__translation') is not None:
             translation_range = expand_range_arg(get_private_attr(self, '__translation'), dim=dim, negate_lower=True)
-            assert len(translation_range) == 2 * dim, f"Expected 'translation' of length {2 * dim}, got {len(translation_range)}."
+            assert_range(translation_range, dim, 'translation')
             translation_range = to_tensor(translation_range).reshape(dim, 2).T
         if get_private_attr(self, '__translation_p') is not None:
             translation_p_range = expand_range_arg(get_private_attr(self, '__translation_p'), dim=dim, negate_lower=True)
-            assert len(translation_p_range) == 2 * dim, f"Expected 'translation_p' of length {2 * dim}, got {len(translation_p_range)}."
+            assert_range(translation_p_range, dim, 'translation_p')
             translation_p_range = to_tensor(translation_p_range).reshape(dim, 2).T
 
         set_private_attr(self, '__rotation_range', rotation_range)

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 LAZY_IMPORTS = {
     'grid': ['Crop', 'GridTransform', 'Pad', 'RandomCrop', 'RandomGridTransform', 'RandomPad', 'RandomResize', 'Resize'],
     'identity': ['Identity'],
-    'intensity': ['ForceResample', 'GaussianNoise', 'IntensityTransform', 'MinMax', 'Normalise', 'RandomGaussianNoise', 'RandomIntensityTransform', 'RandomMinMax', 'RandomNormalise', 'RandomStandardise', 'RandomThreshold', 'Standardise', 'Threshold'],
+    'intensity': ['ForceResample', 'GaussianNoise', 'HistEq', 'IntensityTransform', 'MinMax', 'Normalise', 'RandomGaussianNoise', 'RandomIntensityTransform', 'RandomMinMax', 'RandomNormalise', 'RandomStandardise', 'RandomThreshold', 'Standardise', 'Threshold'],
     'pipeline': ['FrozenPipeline', 'Pipeline'],
     'spatial': ['Affine', 'BreakAffineChain', 'Elastic', 'Flip', 'RandomAffine', 'RandomElastic', 'RandomFlip', 'RandomRotate', 'RandomScale', 'RandomShear', 'RandomSpatialTransform', 'RandomTranslate', 'Rotate', 'Scale', 'Shear', 'SpatialTransform', 'Translate'],
     'transform': ['Transform'],

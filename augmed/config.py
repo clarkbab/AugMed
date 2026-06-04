@@ -1,10 +1,24 @@
 import os
+from typing import Tuple
 
-from .typing import Orientation, SpatialDim
-from .utils.assertions import assert_orientation
+from .typing import Orientation, Orientation2D, Orientation3D, SpatialDim
+from .utils.assertions import assert_dim, assert_orientation
 
 DEFAULT_DIM = 3
-DEFAULT_ORIENTATION = 'LPS'
+DEFAULT_ORIENTATION_2D = 'LS'
+DEFAULT_ORIENTATION_3D = 'LPS'
+
+def get_dim() -> SpatialDim:
+    return dim
+
+def get_orientation(
+    dim: SpatialDim,
+    ) -> Orientation:
+    assert_dim(dim)
+    if dim == 2:
+        return orientation_2d
+    elif dim == 3:
+        return orientation_3d
 
 def init_dim() -> SpatialDim:
     dim = os.environ.get('AM_DIM')
@@ -18,22 +32,18 @@ def init_dim() -> SpatialDim:
         return dim
     return DEFAULT_DIM
 
-def init_orientation() -> Orientation:
-    o = os.environ.get('AM_ORIENT')
-    if o is not None:
-        assert_orientation(o, dim)
-        return o
-    return DEFAULT_ORIENTATION
-
-# Global variables.
-dim = init_dim()
-orientation = init_orientation()
-
-def get_dim() -> SpatialDim:
-    return dim
-
-def get_orientation() -> Orientation:
-    return orientation
+def init_orientation() -> Tuple[Orientation2D, Orientation3D]:
+    o2d = os.environ.get('AM_ORIENT_2D')
+    if o2d is not None:
+        assert_orientation(o2d, 2)
+    else:
+        o2d = DEFAULT_ORIENTATION_2D
+    o3d = os.environ.get('AM_ORIENT_3D')
+    if o3d is not None:
+        assert_orientation(o3d, 3)
+    else:
+        o3d = DEFAULT_ORIENTATION_3D
+    return o2d, o3d
 
 def set_dim(
     d: SpatialDim,
@@ -45,7 +55,14 @@ def set_dim(
 
 def set_orientation(
     o: Orientation,
+    dim: SpatialDim,
     ) -> None:
     assert_orientation(o, dim)
-    global orientation
-    orientation = o
+    global orientation_2d, orientation_3d
+    if dim == 2:
+        orientation_2d = o
+    elif dim == 3:
+        orientation_3d = o
+
+dim = init_dim()
+orientation_2d, orientation_3d = init_orientation()

@@ -31,7 +31,6 @@ class SpatialTransform(Transform):
         ('f', 'fill'),
         ('i', 'interpolation'),
         ('rg', 'return_grid'),
-        ('rs', 'return_single'),
     )
     def transform_images(
         self,
@@ -40,11 +39,10 @@ class SpatialTransform(Transform):
         fill: Number | Literal['border', 'max', 'min', 'reflection', 'zeros'] | None = None,
         interpolation: Literal['bicubic', 'bilinear', 'nearest'] | None = None,
         return_grid: bool = False,
-        return_single: bool = True,
         ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | Tuple[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | AffineMatrix | SamplingGrid]:
-        assert_image_shapes(images, self.__dim)
-        assert_image_sizes(images, self.__dim)
-        images, images_was_single = arg_to_list(images, (np.ndarray, torch.Tensor), return_matched=True)
+        assert_image_shapes(images, get_private_attr(self, '__dim'))
+        assert_image_sizes(images, get_private_attr(self, '__dim'))
+        images = arg_to_list(images, (np.ndarray, torch.Tensor))
         device = get_group_device(images, device=get_private_attr(self, '__device'))
         return_types = [type(i) for i in images]
         images = [to_tensor(i, device=device) for i in images]
@@ -82,7 +80,7 @@ class SpatialTransform(Transform):
         other_data = []
         if return_grid:
             other_data.append(grid_t)
-        return to_return_format(image_ts, other_data=other_data, return_single=return_single and images_was_single, return_types=return_types)
+        return to_return_format(image_ts, other_data=other_data, return_types=return_types)
 
 class RandomSpatialTransform(RandomTransform, SpatialTransform):
     def __init__(

@@ -4,6 +4,7 @@ from typing import Tuple
 
 from ...typing import ImageTensor, Number, SpatialDim, TransformParams
 from ...utils.args import alias_kwargs, arg_default, expand_range_arg
+from ...utils.assertions import assert_range
 from ...utils.conversion import to_tensor, to_tuple
 from ...utils.maths import round
 from ..identity import Identity
@@ -121,19 +122,19 @@ class RandomGaussianNoise(RandomIntensityTransform):
         dim = 1    # Dim=1 for all intensity transforms.
         if self.__mean is not None:
             mean_range = expand_range_arg(self.__mean, dim=dim, negate_lower=True)
-            assert len(mean_range) == 2 * dim, f"Expected 'mean' of length {2 * dim}, got {len(mean_range)}."
+            assert_range(mean_range, dim, 'mean')
             mean_range = to_tensor(mean_range)
         if self.__mean_p is not None:
             mean_p_range = expand_range_arg(self.__mean_p, dim=dim, negate_lower=True)
-            assert len(mean_p_range) == 2 * dim, f"Expected 'mean_p' of length {2 * dim}, got {len(mean_p_range)}."
+            assert_range(mean_p_range, dim, 'mean_p')
             mean_p_range = to_tensor(mean_p_range)
         if self.__std is not None:
             std_range = expand_range_arg(self.__std, dim=dim, negate_lower=True)
-            assert len(std_range) == 2 * dim, f"Expected 'std' of length {2 * dim}, got {len(std_range)}."
+            assert_range(std_range, dim, 'std')
             std_range = to_tensor(std_range)
         if self.__std_p is not None:
             std_p_range = expand_range_arg(self.__std_p, dim=dim, negate_lower=True)
-            assert len(std_p_range) == 2 * dim, f"Expected 'std_p' of length {2 * dim}, got {len(std_p_range)}."
+            assert_range(std_p_range, dim, 'std_p')
             std_p_range = to_tensor(std_p_range)
         self.__mean_range = mean_range
         self.__mean_p_range = mean_p_range

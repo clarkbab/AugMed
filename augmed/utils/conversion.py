@@ -61,7 +61,6 @@ def to_list(
 
 def to_return_format(
     data: Points | List[Image],
-    return_single: bool = True,
     return_types: type | List[type] | None = None,
     other_data: List[AffineMatrix | TransformParams] | None = None,
     ) -> Image | Points | List[Image | Points]:
@@ -86,8 +85,8 @@ def to_return_format(
     if other_data is not None:
         data += other_data
 
-    # Convert to a single value if appropriate.
-    if return_single and len(data) == 1:
+    # Return a single value if there is only one item.
+    if len(data) == 1:
         data = data[0]
 
     return data

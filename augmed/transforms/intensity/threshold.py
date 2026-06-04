@@ -5,6 +5,7 @@ from typing import Tuple
 
 from ...typing import ImageTensor, Number, TransformParams
 from ...utils.args import alias_kwargs
+from ...utils.assertions import assert_range
 from ...utils.conversion import to_tensor, to_tuple
 from ...utils.maths import round
 from ..identity import Identity
@@ -33,10 +34,10 @@ class RandomThreshold(RandomIntensityTransform):
         super().__init__(**kwargs)
         self.__min_range = to_tensor(min, broadcast=2) if min is not None else None
         if self.__min_range is not None:
-            assert len(self.__min_range) == 2, f"Expected 'min' of length 2, got {len(self.__min_range)}."
+            assert_range(self.__min_range, 1, 'min')
         self.__max_range = to_tensor(max, broadcast=2) if max is not None else None
         if self.__max_range is not None:
-            assert len(self.__max_range) == 2, f"Expected 'max' of length 2, got {len(self.__max_range)}."
+            assert_range(self.__max_range, 1, 'max')
 
     def freeze(self) -> Threshold | Identity:
         should_apply = self.__rng.random(1) < self.__p

@@ -47,14 +47,15 @@ class Transform:
         self,
         **kwargs,
         ) -> TransformParams:
+        #linter:nosort
         return dict(
+            type=self.__class__.__name__,
             device=get_private_attr(self, '__device'),
-            **kwargs,
             dim=get_private_attr(self, '__dim'),
             fill=get_private_attr(self, '__fill'),
             filter_offgrid=get_private_attr(self, '__filter_offgrid'),
             interpolation=get_private_attr(self, '__interpolation'),
-            type=self.__class__.__name__,
+            **kwargs,
         )
 
     def __repr__(self) -> str:
@@ -131,10 +132,9 @@ class Transform:
         interpolation: Literal['bicubic', 'bilinear', 'nearest'] | None = None,
         return_grid: bool = False,
         return_filtered: bool = False,
-        return_single: bool = True,
         size: Size | None = None,
         ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | Points | List[Image | LabelImage | Points | AffineMatrix | SamplingGrid | TransformParams]:
-        data, data_was_single = arg_to_list(data, (np.ndarray, torch.Tensor), return_matched=True)
+        data = arg_to_list(data, (np.ndarray, torch.Tensor))
         return_types = [type(d) for d in data]
         filter_offgrid = filter_offgrid if filter_offgrid is not None else get_private_attr(self, '__filter_offgrid')
 
@@ -164,7 +164,9 @@ class Transform:
         # Transform images.
         images = [data[i] for i in image_indices]
         if len(images) > 0:
-            results = self.transform_images(images, affine=affine, fill=fill, interpolation=interpolation, return_grid=return_grid, return_single=False)
+            results = self.transform_images(images, affine=affine, fill=fill, interpolation=interpolation, return_grid=return_grid)
+            if isinstance(results, (np.ndarray, torch.Tensor)):
+                results = [results]
             if return_grid:
                 *image_ts, grid_t = results
             else:
@@ -175,7 +177,9 @@ class Transform:
         # Transform points.
         points = [data[i] for i in points_indices]
         if len(points) > 0:
-            results = self.transform_points(points, affine=affine, filter_offgrid=filter_offgrid, return_filtered=return_filtered, return_single=False, size=size)
+            results = self.transform_points(points, affine=affine, filter_offgrid=filter_offgrid, return_filtered=return_filtered, size=size)
+            if isinstance(results, (np.ndarray, torch.Tensor)):
+                results = [results]
             if filter_offgrid and return_filtered:
                 *points_ts, indices = results
             else:
@@ -201,9 +205,9 @@ class Transform:
         if filter_offgrid and return_filtered and len(points) > 0:
             # Indices could be a tensor or list of tensors for multiple points arrays.
             points_return_types = [return_types[i] for i in points_indices]
-            indices = to_return_format(indices, return_single=True, return_types=points_return_types)
+            indices = to_return_format(indices, return_types=points_return_types)
             other_data.append(indices)
-        return to_return_format(data_ts, other_data=other_data, return_single=return_single and data_was_single, return_types=return_types)
+        return to_return_format(data_ts, other_data=other_data, return_types=return_types)
 
     def transform_images(
         self,
@@ -278,13 +282,12 @@ class RandomTransform(Transform):
         # Delegate to frozen transform.
         t_frozen = self.freeze()
         results = t_frozen.transform(*args, **kwargs)
-        results_is_single = isinstance(results, (np.ndarray, torch.Tensor))
 
         # Convert to return format.
         other_data = []
         if return_params:
             other_data.append(t_frozen.params)
-        return to_return_format(results, other_data=other_data, return_single=results_is_single)
+        return to_return_format(results, other_data=other_data)
 
     @alias_kwargs(
         ('rp', 'return_params'),
@@ -298,13 +301,12 @@ class RandomTransform(Transform):
         # Delegate to frozen transform.
         t_frozen = self.freeze()
         results = t_frozen.transform_images(*args, **kwargs)
-        results_is_single = isinstance(results, (np.ndarray, torch.Tensor))
 
         # Add optional "params".
         other_data = []
         if return_params:
             other_data.append(t_frozen.params)
-        return to_return_format(results, other_data=other_data, return_single=results_is_single)
+        return to_return_format(results, other_data=other_data)
 
     @alias_kwargs(
         ('rp', 'return_params'),
@@ -318,11 +320,10 @@ class RandomTransform(Transform):
         # Delegate to frozen transform.
         t_frozen = self.freeze()
         results = t_frozen.transform_points(*args, **kwargs)
-        results_is_single = isinstance(results, (np.ndarray, torch.Tensor))
 
         # Convert to return format.
         other_data = []
         if return_params:
             other_data.append(t_frozen.params)
-        return to_return_format(results, other_data=other_data, return_single=results_is_single)
+        return to_return_format(results, other_data=other_data)
     

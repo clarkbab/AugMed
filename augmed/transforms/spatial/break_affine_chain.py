@@ -46,18 +46,17 @@ class BreakAffineChain(SpatialTransform):
     @alias_kwargs(
         ('fo', 'filter_offgrid'),
         ('rf', 'return_filtered'),
-        ('rs', 'return_single'),
+        ('s', 'size'),
     )
     def transform_points(
         self,
         points: Points | List[Points],
         filter_offgrid: bool | None = None,
         return_filtered: bool = False,
-        return_single: bool = True,
         **kwargs,
         ) -> Points | List[Points | Indices | List[Indices]]:
         assert_points_shapes(points, self.__dim)
-        points, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_matched=True)
+        points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=self.__device)
         return_types = [type(p) for p in points]
         points = [to_tensor(p, device=device, dtype=torch.float32) for p in points]
@@ -65,6 +64,6 @@ class BreakAffineChain(SpatialTransform):
         other_data = []
         if filter_offgrid and return_filtered:
             indiceses = [to_tensor([], device=device, dtype=torch.int32) for _ in points]
-            indiceses = to_return_format(indiceses, return_single=False, return_types=return_types)
+            indiceses = to_return_format(indiceses, return_types=return_types)
             other_data.append(indiceses)
-        return to_return_format(points, other_data=other_data, return_single=return_single and points_was_single, return_types=return_types)
+        return to_return_format(points, other_data=other_data, return_types=return_types)

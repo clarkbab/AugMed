@@ -4,7 +4,7 @@ from typing import List, Tuple
 
 from ...typing import AffineMatrix, BatchChannelImage, BatchImage, BatchLabelImage, ChannelImage, Image, ImageTensor, Indices, LabelImage, Points, SamplingGridTensor
 from ...utils.args import alias_kwargs, arg_to_list
-from ...utils.assertions import assert_image_shapes, assert_image_sizes, assert_points_shapes
+from ...utils.assertions import assert_image_shapes, assert_points_shapes
 from ...utils.conversion import to_return_format, to_tensor
 from ...utils.geometry import spatial_size
 from ...utils.python import get_group_device, get_private_attr
@@ -20,19 +20,17 @@ class IntensityTransform(Transform):
     @alias_kwargs(
         ('a', 'affine'),
         ('rg', 'return_grid'),
-        ('rs', 'return_single'),
     )
     def transform_images(
         self,
         images: Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage],
         affine: AffineMatrix | None = None,
         return_grid: bool = False,
-        return_single: bool = True,
         **kwargs,   # Allows them to pass kwargs that work for other transforms, e.g. 'fill'.
         ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | Tuple[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | AffineMatrix | SamplingGridTensor]:
-        assert_image_shapes(images, self.__dim)
-        assert_image_sizes(images, self.__dim)
-        images, images_was_single = arg_to_list(images, (np.ndarray, torch.Tensor), return_matched=True)
+        assert_image_shapes(images, get_private_attr(self, '__dim'))
+        assert_image_shapes(images, get_private_attr(self, '__dim'))
+        images = arg_to_list(images, (np.ndarray, torch.Tensor))
         device = get_group_device(images, device=get_private_attr(self, '__device'))
         return_types = [type(i) for i in images]
         images = [to_tensor(i, device=device) for i in images]
@@ -56,7 +54,7 @@ class IntensityTransform(Transform):
         if return_grid:
             grid_t = (spatial_size(image_t, get_private_attr(self, '__dim')), affine)
             other_data.append(grid_t)
-        return to_return_format(image_ts, other_data=other_data, return_single=return_single and images_was_single, return_types=return_types)
+        return to_return_format(image_ts, other_data=other_data, return_types=return_types)
 
     def transform_intensity(
         self,
@@ -69,7 +67,6 @@ class IntensityTransform(Transform):
         ('a', 'affine'),
         ('fo', 'filter_offgrid'),
         ('rf', 'return_filtered'),
-        ('rs', 'return_single'),
         ('s', 'size'),
     )
     def transform_points(
@@ -77,11 +74,10 @@ class IntensityTransform(Transform):
         points: Points | List[Points],
         filter_offgrid: bool | None = None,
         return_filtered: bool = False,
-        return_single: bool = True,
         **kwargs,
         ) -> Points | List[Points | Indices | List[Indices]]:
-        assert_points_shapes(points, self.__dim)
-        points, points_was_single = arg_to_list(points, (np.ndarray, torch.Tensor), return_matched=True)
+        assert_points_shapes(points, get_private_attr(self, '__dim'))
+        points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=get_private_attr(self, '__device'))
         return_types = [type(p) for p in points]
         points = [to_tensor(p, device=device) for p in points]
@@ -89,9 +85,9 @@ class IntensityTransform(Transform):
         other_data = []
         if filter_offgrid and return_filtered:
             indiceses = [to_tensor([], device=device, dtype=torch.int32) for _ in points]
-            indiceses = to_return_format(indiceses, return_single=False, return_types=return_types)
+            indiceses = to_return_format(indiceses, return_types=return_types)
             other_data.append(indiceses)
-        return to_return_format(points, other_data=other_data, return_single=return_single and points_was_single, return_types=return_types)
+        return to_return_format(points, other_data=other_data, return_types=return_types)
 
 class RandomIntensityTransform(RandomTransform, IntensityTransform):
     def __init__(

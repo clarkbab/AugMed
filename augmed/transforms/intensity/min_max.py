@@ -5,6 +5,7 @@ from typing import Tuple
 
 from ...typing import ImageTensor, Number, TransformParams
 from ...utils.args import alias_kwargs, expand_range_arg
+from ...utils.assertions import assert_range
 from ...utils.conversion import to_tensor, to_tuple
 from ...utils.maths import round
 from ..identity import Identity
@@ -71,10 +72,10 @@ class RandomMinMax(RandomIntensityTransform):
     def __expand_range_args(self) -> None:
         dim = 1    # Dim=1 for all intensity transforms.
         min_range = expand_range_arg(self.__min, dim=dim)
-        assert len(min_range) == 2 * dim, f"Expected 'min' of length {2 * dim}, got {len(min_range)}."
+        assert_range(min_range, dim, 'min')
         self.__min_range = to_tensor(min_range)
         max_range = expand_range_arg(self.__max, dim=dim)
-        assert len(max_range) == 2 * dim, f"Expected 'max' of length {2 * dim}, got {len(max_range)}."
+        assert_range(max_range, dim, 'max')
         self.__max_range = to_tensor(max_range)
 
     def freeze(self) -> MinMax | Identity:
