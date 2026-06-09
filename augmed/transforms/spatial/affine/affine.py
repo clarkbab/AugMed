@@ -33,22 +33,21 @@ class Affine(SpatialTransform):
     )
     def __init__(
         self,
-        rotation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = 0.0,
+        rotation: Range2PerDim | None = 0.0,
         rotation_centre: Point | Literal['image-centre'] = 'image-centre',
-        rotation_centre_offset: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 0.0,
-        scaling: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = 1.0,
+        rotation_centre_offset: Range2PerDim = 0.0,
+        scaling: Range2PerDim | None = 1.0,
         scaling_centre: Point | Literal['image-centre'] = 'image-centre',
-        scaling_centre_offset: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 0.0,
+        scaling_centre_offset: Range2PerDim = 0.0,
         # Why do we set both to None?
         # We don't want the user to have to override the default, (translation_p=0.0) just to
         # use translation.
-        translation: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = None,
-        translation_p: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor | None = None,
+        translation: Range2PerDim | None = None,
+        translation_p: Range2PerDim | None = None,
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
         translation = arg_default((translation, translation_p), translation, 0.0)
-        translation_p = arg_default((translation, translation_p), translation_p, None)
 
         # Set rotation.
         if rotation is not None:

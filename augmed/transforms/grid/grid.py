@@ -41,8 +41,8 @@ class GridTransform(Transform):
         interpolation: Literal['bicubic', 'bilinear', 'nearest'] | None = None,
         return_grid: bool = False,
         ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | Tuple[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | AffineMatrix | SamplingGridTensor]:
-        assert_image_shapes(images, self.__dim)
-        assert_image_sizes(images, self.__dim)
+        assert_image_shapes(images, get_private_attr(self, '__dim'))
+        assert_image_sizes(images, get_private_attr(self, '__dim'))
         images = arg_to_list(images, (np.ndarray, torch.Tensor))
         device = get_group_device(images, device=get_private_attr(self, '__device'))
         return_types = [type(i) for i in images]

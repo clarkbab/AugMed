@@ -92,9 +92,9 @@ def assert_range(
     arg: Tuple[Number],
     dim: SpatialDim,
     name: str,
-    n_vals_per_dim: int = 2,
+    vals_per_dim: int = 2,
     ) -> None:
-    expected_length = dim * n_vals_per_dim
+    expected_length = dim * vals_per_dim
     if len(arg) != expected_length:
         raise ValueError(f"Got '{name}' of length {len(arg)}, expected length {expected_length} for {dim}D spatial. Set 'dim' param if {dim}D spatial is not correct.")
     

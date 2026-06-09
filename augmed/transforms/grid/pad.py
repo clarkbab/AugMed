@@ -230,7 +230,7 @@ class RandomPad(RandomGridTransform):
         if self.__add is not None:
             cr_vals_per_dim = 4
             add_range = expand_range_arg(self.__add, dim=self.__dim, vals_per_dim=cr_vals_per_dim)
-            assert_range(add_range, self.__dim, 'add', n_vals_per_dim=cr_vals_per_dim)
+            assert_range(add_range, self.__dim, 'add', vals_per_dim=cr_vals_per_dim)
             for i, s in enumerate(symmetric):
                 cr_axis_vals = add_range[i * cr_vals_per_dim:(i + 1) * cr_vals_per_dim]
                 if s and (cr_axis_vals[0] != cr_axis_vals[2] or cr_axis_vals[1] != cr_axis_vals[3]):
@@ -239,7 +239,7 @@ class RandomPad(RandomGridTransform):
         else:
             cmr_vals_per_dim = 4
             margin_range = expand_range_arg(self.__margin, dim=self.__dim, vals_per_dim=cmr_vals_per_dim)
-            assert_range(margin_range, self.__dim, 'margin', n_vals_per_dim=cmr_vals_per_dim)
+            assert_range(margin_range, self.__dim, 'margin', vals_per_dim=cmr_vals_per_dim)
             for i, s in enumerate(symmetric):
                 cmr_axis_vals = margin_range[i * cmr_vals_per_dim:(i + 1) * cmr_vals_per_dim]
                 if s and (cmr_axis_vals[0] != cmr_axis_vals[2] or cmr_axis_vals[1] != cmr_axis_vals[3]):
