@@ -59,9 +59,14 @@ class CallVisitor(ast.NodeVisitor):
                     self.__kwargs.append(k.arg)
 
 def alias_kwargs(
-    *aliases: Tuple[str, str],
+    *aliases: Tuple[str | Tuple[str, ...], str],
     ) -> Callable:
-    alias_map = dict(aliases)
+    alias_map = {}
+    for shortcuts, full_name in aliases:
+        if isinstance(shortcuts, str):
+            shortcuts = (shortcuts,)
+        for shortcut in shortcuts:
+            alias_map[shortcut] = full_name
 
     def decorator(func):
         @wraps(func)
