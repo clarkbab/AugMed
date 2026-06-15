@@ -5,7 +5,7 @@ import torch
 import torch
 from typing import List, Literal, Tuple
 
-from ....typing import AffineMatrix, AffineMatrixTensor, Indices, Number, Point, Points, PointsTensor, SamplingGrid, Size, SpatialDim, TransformParams
+from ....typing import AffineMatrix, AffineMatrixTensor, Number, Point, PointsInput, PointsOutputs, PointsTensor, Range2PerDim, SamplingGrid, Size, SpatialDim, TransformParams
 from ....utils.args import alias_kwargs, arg_default, arg_to_list, expand_range_arg
 from ....utils.assertions import assert_points_shapes, assert_range
 from ....utils.conversion import to_return_format, to_tensor, to_tuple
@@ -318,14 +318,15 @@ class Affine(SpatialTransform):
     )
     def transform_points(
         self,
-        points: Points | List[Points],
+        points: PointsInput,
         affine: AffineMatrix | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,  # Filter off-grid points, or those that are off-grid along a certain axis.
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
-        ) -> Points | List[Points | Indices | List[Indices]]:
+        ) -> PointsOutputs:
+        self.infer_dim(points)
         assert_points_shapes(points, get_private_attr(self, '__dim'))
         points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=get_private_attr(self, '__device'))

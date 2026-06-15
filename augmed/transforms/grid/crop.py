@@ -4,10 +4,10 @@ import numpy as np
 import torch
 from typing import List, Literal, Tuple
 
-from ...typing import AffineMatrix, Indices, Number, Point, Points, SamplingGridTensor, Size, SpatialDim, TransformParams
+from ...typing import AffineMatrix, Number, Point, PointsInput, PointsOutputs, Range2PerDim, Range4PerDim, SamplingGridTensor, Size, SpatialDim, TransformParams
 from ...utils.args import alias_kwargs, arg_default, arg_to_list, expand_range_arg
 from ...utils.assertions import assert_points_shapes, assert_range
-from ...utils.conversion import to_numpy, to_return_format, to_tensor, to_tuple
+from ...utils.conversion import to_return_format, to_tensor, to_tuple
 from ...utils.geometry import affine_spacing, create_affine, fov, fov_centre, to_world_coords
 from ...utils.python import get_group_device, wrap_quotes
 from ..identity import Identity
@@ -166,13 +166,14 @@ class Crop(GridTransform):
     )
     def transform_points(
         self,
-        points: Points | List[Points],
+        points: PointsInput,
         affine: AffineMatrix | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
         return_filtered: bool = False,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
-        ) -> Points | List[Points | Indices | List[Indices]]:
+        ) -> PointsOutputs:
+        self.infer_dim(points=points)
         assert_points_shapes(points, self.__dim)
         points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=self.__device)
@@ -310,7 +311,7 @@ class RandomCrop(RandomGridTransform):
             elif self.__size_range is not None:
                 draw = to_tensor(self.__rng.random(self.__dim))
                 size_draw = draw * (self.__size_range[1] - self.__size_range[0]) + self.__size_range[0]
-                params['size'] = size_draw.T.flatten()
+                params['size'] = size_draw.flatten()
         elif self.__remove_range is not None:
             draw = to_tensor(self.__rng.random((2, self.__dim)))
             remove_draw = draw * (self.__remove_range[1] - self.__remove_range[0]) + self.__remove_range[0]

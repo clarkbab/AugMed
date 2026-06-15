@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from typing import List
 
-from ..typing import AffineMatrix, BatchChannelImage, BatchImage, BatchLabelImage, ChannelImage, Image, Indices, LabelImage, Points, SamplingGrid, SpatialDim, TransformParams
+from ..typing import AffineMatrix, ImagesInput, ImageOutputs, PointsInput, PointsOutputs, SpatialDim, TransformParams
 from ..utils.args import alias_kwargs, arg_to_list
 from ..utils.assertions import assert_image_shapes, assert_image_sizes, assert_points_shapes
 from ..utils.conversion import to_return_format, to_tensor
@@ -36,11 +36,12 @@ class Identity(Transform):
     )
     def transform_images(
         self,
-        images: Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage],
+        images: ImagesInput,
         affine: AffineMatrix | None = None,
         return_grid: bool = False,
         **kwargs,
-        ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | AffineMatrix | SamplingGrid]:
+        ) -> ImageOutputs:
+        self.infer_dim(images=images)
         assert_image_shapes(images, self.__dim)
         assert_image_sizes(images, self.__dim)
         images = arg_to_list(images, (np.ndarray, torch.Tensor))
@@ -72,11 +73,12 @@ class Identity(Transform):
     )
     def transform_points(
         self,
-        points: Points | List[Points],
+        points: PointsInput,
         filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
         return_filtered: bool = False,
         **kwargs,
-        ) -> Points | List[Points | Indices | List[Indices]]:
+        ) -> PointsOutputs:
+        self.infer_dim(points=points)
         assert_points_shapes(points, self.__dim)
         points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=self.__device)

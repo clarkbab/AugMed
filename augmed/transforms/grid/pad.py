@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from typing import List, Literal, Tuple
 
-from ...typing import AffineMatrix, Indices, Number, Points, SamplingGridTensor, Size, SpatialDim, TransformParams
+from ...typing import AffineMatrix, Number, PointsInput, PointsOutputs, SamplingGridTensor, Size, SpatialDim, TransformParams
 from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg
 from ...utils.assertions import assert_points_shapes, assert_range
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
@@ -138,7 +138,7 @@ class Pad(GridTransform):
     )
     def transform_points(
         self,
-        points: Points | List[Points],
+        points: PointsInput,
         # TODO: Alter filter_offgrid part as pad can never move points off-grid.
         affine: AffineMatrix | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
@@ -146,7 +146,8 @@ class Pad(GridTransform):
         return_filtered: bool = False,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
-        ) -> Points | List[Points | Indices | List[Indices]]:
+        ) -> PointsOutputs:
+        self.infer_dim(points)
         assert_points_shapes(points)
         points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=self.__device)

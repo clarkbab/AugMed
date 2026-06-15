@@ -1,10 +1,9 @@
 import numpy as np
 import torch
-from typing import List, Tuple
 
-from ...typing import AffineMatrix, BatchChannelImage, BatchImage, BatchLabelImage, ChannelImage, Image, ImageTensor, Indices, LabelImage, Points, SamplingGridTensor
+from ...typing import AffineMatrix, ImagesInput, ImageOutputs, ImageTensor, PointsInput, PointsOutputs
 from ...utils.args import alias_kwargs, arg_to_list
-from ...utils.assertions import assert_image_shapes, assert_points_shapes
+from ...utils.assertions import assert_image_shapes, assert_image_sizes, assert_points_shapes
 from ...utils.conversion import to_return_format, to_tensor
 from ...utils.geometry import spatial_size
 from ...utils.python import get_group_device, get_private_attr
@@ -23,13 +22,14 @@ class IntensityTransform(Transform):
     )
     def transform_images(
         self,
-        images: Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage],
+        images: ImagesInput,
         affine: AffineMatrix | None = None,
         return_grid: bool = False,
         **kwargs,   # Allows them to pass kwargs that work for other transforms, e.g. 'fill'.
-        ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | Tuple[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | AffineMatrix | SamplingGridTensor]:
+        ) -> ImageOutputs:
+        self.infer_dim(images=images)
         assert_image_shapes(images, get_private_attr(self, '__dim'))
-        assert_image_shapes(images, get_private_attr(self, '__dim'))
+        assert_image_sizes(images, get_private_attr(self, '__dim'))
         images = arg_to_list(images, (np.ndarray, torch.Tensor))
         device = get_group_device(images, device=get_private_attr(self, '__device'))
         return_types = [type(i) for i in images]
@@ -71,11 +71,12 @@ class IntensityTransform(Transform):
     )
     def transform_points(
         self,
-        points: Points | List[Points],
+        points: PointsInput,
         filter_offgrid: bool | None = None,
         return_filtered: bool = False,
         **kwargs,
-        ) -> Points | List[Points | Indices | List[Indices]]:
+        ) -> PointsOutputs:
+        self.infer_dim(points)
         assert_points_shapes(points, get_private_attr(self, '__dim'))
         points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=get_private_attr(self, '__device'))

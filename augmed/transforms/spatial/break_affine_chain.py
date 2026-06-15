@@ -2,9 +2,8 @@ import numpy as np
 import numpy as np
 import torch
 import torch
-from typing import List
 
-from ...typing import Indices, Points, PointsTensor
+from ...typing import PointsInput, PointsOutputs, PointsTensor
 from ...utils.args import alias_kwargs, arg_to_list
 from ...utils.assertions import assert_points_shapes
 from ...utils.conversion import to_return_format, to_tensor
@@ -50,11 +49,12 @@ class BreakAffineChain(SpatialTransform):
     )
     def transform_points(
         self,
-        points: Points | List[Points],
+        points: PointsInput,
         filter_offgrid: bool | None = None,
         return_filtered: bool = False,
         **kwargs,
-        ) -> Points | List[Points | Indices | List[Indices]]:
+        ) -> PointsOutputs:
+        self.infer_dim(points)
         assert_points_shapes(points, self.__dim)
         points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=self.__device)

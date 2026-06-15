@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 import torch
-from typing import List, Literal, Tuple
+from typing import Literal, Tuple
 
-from ...typing import AffineMatrix, AffineMatrixTensor, ChannelImageTensor, Indices, Number, Points, PointsTensor, Size, SpatialDim, TransformParams
+from ...typing import AffineMatrix, AffineMatrixTensor, ChannelImageTensor, Number, PointsInput, PointsOutputs, PointsTensor, Size, SpatialDim, TransformParams
 from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg
 from ...utils.assertions import assert_points_shapes, assert_range
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
@@ -370,14 +370,15 @@ class Elastic(SpatialTransform):
     )
     def transform_points(
         self,
-        points: Points | List[Points],
+        points: PointsInput,
         affine: AffineMatrix | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool | None = None,
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
-        ) -> Points | List[Points | Indices | List[Indices]]:
+        ) -> PointsOutputs:
+        self.infer_dim(points)
         assert_points_shapes(points, self.__dim)
         points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=self.__device)

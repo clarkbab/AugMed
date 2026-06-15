@@ -1,8 +1,8 @@
 import numpy as np
 import torch
-from typing import List, Literal, Tuple
+from typing import Literal
 
-from ...typing import AffineMatrix, BatchChannelImage, BatchImage, BatchLabelImage, ChannelImage, Image, LabelImage, Number, PointsTensor, SamplingGrid
+from ...typing import AffineMatrix, ImagesInput, ImageOutputs, Number, PointsTensor
 from ...utils.args import alias_kwargs, arg_to_list
 from ...utils.assertions import assert_image_shapes, assert_image_sizes
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
@@ -34,12 +34,13 @@ class SpatialTransform(Transform):
     )
     def transform_images(
         self,
-        images: Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage],
+        images: ImagesInput,
         affine: AffineMatrix | None = None,
         fill: Number | Literal['border', 'max', 'min', 'reflection', 'zeros'] | None = None,
         interpolation: Literal['bicubic', 'bilinear', 'nearest'] | None = None,
         return_grid: bool = False,
-        ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | Tuple[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | AffineMatrix | SamplingGrid]:
+        ) -> ImageOutputs:
+        self.infer_dim(images=images)
         assert_image_shapes(images, get_private_attr(self, '__dim'))
         assert_image_sizes(images, get_private_attr(self, '__dim'))
         images = arg_to_list(images, (np.ndarray, torch.Tensor))

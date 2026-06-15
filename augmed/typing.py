@@ -128,6 +128,9 @@ Spacing = Spacing2D | Spacing3D
 SpacingTensor = Spacing2DTensor | Spacing3DTensor
 
 # Third-order types (you get it).
+ImagesInput = Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage]
+PointsInput = Points | List[Points]
+PointsOutputs = Points | List[Points | Indices | List[Indices]]
 class SamplingGrid(NamedTuple):
     size: Size
     affine: AffineMatrix | None = None
@@ -135,3 +138,6 @@ class SamplingGrid(NamedTuple):
 class SamplingGridTensor(NamedTuple):
     size: SizeTensor
     affine: AffineMatrixTensor | None = None
+
+# Fourth-order types.
+ImageOutputs = Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | AffineMatrix | SamplingGrid]

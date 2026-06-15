@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 LAZY_IMPORTS = {
     'args': ['alias_kwargs', 'arg_default', 'arg_to_list', 'bubble_args', 'expand_range_arg', 'get_inner_args'],
-    'assertions': ['assert_dim', 'assert_image_shapes', 'assert_image_sizes', 'assert_orientation', 'assert_points_shapes'],
+    'assertions': ['assert_dim', 'assert_image_shapes', 'assert_image_shapes', 'assert_orientation', 'assert_points_shapes'],
     'conversion': ['to_list', 'to_numpy', 'to_return_format', 'to_tensor', 'to_tuple'],
     'debug': ['from_desc'],
     'geometry': [

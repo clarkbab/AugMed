@@ -1,8 +1,8 @@
 import numpy as np
 import torch
-from typing import List, Literal, Tuple
+from typing import List, Literal
 
-from ...typing import AffineMatrix, BatchChannelImage, BatchImage, BatchLabelImage, ChannelImage, Image, Indices, LabelImage, Number, Points, SamplingGridTensor, SpatialDim
+from ...typing import AffineMatrix, ImagesInput, ImageOutputs, Number, PointsInput, PointsOutputs, SamplingGridTensor, SpatialDim
 from ...utils.args import alias_kwargs, arg_to_list
 from ...utils.assertions import assert_image_shapes, assert_image_sizes, assert_points_shapes
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
@@ -35,12 +35,13 @@ class GridTransform(Transform):
     )
     def transform_images(
         self,
-        images: Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage],
+        images: ImagesInput,
         affine: AffineMatrix | None = None,
         fill: Number | Literal['border', 'max', 'min', 'reflection', 'zeros'] | None = None,
         interpolation: Literal['bicubic', 'bilinear', 'nearest'] | None = None,
         return_grid: bool = False,
-        ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | Tuple[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | AffineMatrix | SamplingGridTensor]:
+        ) -> ImageOutputs:
+        self.infer_dim(images=images)
         assert_image_shapes(images, get_private_attr(self, '__dim'))
         assert_image_sizes(images, get_private_attr(self, '__dim'))
         images = arg_to_list(images, (np.ndarray, torch.Tensor))
@@ -89,11 +90,12 @@ class GridTransform(Transform):
     )
     def transform_points(
         self,
-        points: Points | List[Points],
+        points: PointsInput,
         filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
         return_filtered: bool = False,
         **kwargs,  # Allows them to pass kwargs that work for other transforms, e.g. 'affine'.
-        ) -> Points | List[Points | Indices | List[Indices]]:
+        ) -> PointsOutputs:
+        self.infer_dim(points=points)
         assert_points_shapes(points, self.__dim)
         points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=get_private_attr(self, '__device'))

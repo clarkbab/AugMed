@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from typing import List, Tuple
 
-from ..typing import BatchChannelImage, BatchImage, BatchLabelImage, ChannelImage, Image, LabelImage, Number, Orientation, Orientation2D, Orientation3D, Points, Size, SpatialDim
+from ..typing import Image, ImagesInput, Number, Orientation, Orientation2D, Orientation3D, Points, Size, SpatialDim
 from .args import arg_to_list
 
 def assert_dim(
@@ -12,7 +12,7 @@ def assert_dim(
         raise ValueError(f"Invalid dim '{dim}'. Spatial dimensions must be 2 or 3.")
 
 def assert_image_shapes(
-    images: Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage],
+    images: ImagesInput,
     dim: SpatialDim,
     batch_allowed: bool = True,
     channel_allowed: bool = True,
@@ -41,7 +41,7 @@ def assert_image_shapes(
             raise ValueError(message)
 
 def assert_image_sizes(
-    images: Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage], 
+    images: ImagesInput,
     dim: SpatialDim,
     ) -> None:
     # Avoid circular import.

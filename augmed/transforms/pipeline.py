@@ -6,7 +6,7 @@ import torch
 import torch
 from typing import List, Literal, Tuple, Union
 
-from ..typing import AffineMatrix, AffineMatrixTensor, BatchChannelImage, BatchImage, BatchLabelImage, ChannelImage, Image, Indices, LabelImage, Number, Points, PointsTensor, SamplingGrid, Size, SpatialDim, TransformParams
+from ..typing import AffineMatrix, AffineMatrixTensor, ImagesInput, ImageOutputs, Number, PointsInput, PointsOutputs, PointsTensor, SamplingGrid, Size, SpatialDim, TransformParams
 from ..utils.args import alias_kwargs, arg_to_list
 from ..utils.assertions import assert_image_shapes, assert_image_sizes, assert_points_shapes
 from ..utils.conversion import to_return_format, to_tensor, to_tuple
@@ -199,12 +199,13 @@ class FrozenPipeline(Transform):
     )
     def transform_images(
         self,
-        images: Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage],
+        images: ImagesInput,
         affine: AffineMatrix | None = None,
         fill: Number | Literal['border', 'max', 'min', 'reflection', 'zeros'] | None = None,
         interpolation: Literal['bicubic', 'bilinear', 'nearest'] | None = None,
         return_grid: bool = False,
-        ) -> Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | List[Image | LabelImage | BatchImage | BatchLabelImage | ChannelImage | BatchChannelImage | AffineMatrix | SamplingGrid]:
+        ) -> ImageOutputs:
+        self.infer_dim(images=images)
         assert_image_shapes(images, self.__dim)
         assert_image_sizes(images, self.__dim)
         images = arg_to_list(images, (np.ndarray, torch.Tensor))
@@ -300,13 +301,14 @@ class FrozenPipeline(Transform):
     )
     def transform_points(
         self,
-        points: Points | List[Points],
+        points: PointsInput,
         affine: AffineMatrix | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
         filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
         return_filtered: bool = False,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
-        ) -> Points | List[Points | Indices | List[Indices]]:
+        ) -> PointsOutputs:
+        self.infer_dim(points=points)
         assert_points_shapes(points, self.__dim)
         points = arg_to_list(points, (np.ndarray, torch.Tensor))
         device = get_group_device(points, device=self.__device)
