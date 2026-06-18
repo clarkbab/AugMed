@@ -2,7 +2,7 @@ import torch
 import torch
 from typing import Literal
 
-from ..config import get_dim
+from ..defaults import get_dim
 from ..typing import AffineMatrixTensor, ImageTensor, Number, PointsTensor, SamplingGridTensor, SpatialDim
 from ..utils.args import arg_default
 from ..utils.conversion import to_tensor

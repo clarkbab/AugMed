@@ -5,7 +5,7 @@ import seaborn as sns
 import torch
 from typing import List, Literal, Tuple
 
-from ..config import get_orientation
+from ..defaults import get_orientation
 from ..typing import AffineMatrix, AffineMatrix2D, AffineMatrix3D, AffineMatrix3DArray, BatchBox2D, BatchBox3D, BatchLabelImage, BatchLabelImage2D, BatchLabelImage3D, BatchLabelImage3DArray, BatchPoints, BatchPoints2D, BatchPoints3D, Box2D, Box3D, Image, Image2D, Image2DArray, Image3D, Image3DArray, LabelImage, LabelImage2D, LabelImage3D, Number, Orientation2D, Orientation3D, Point, Point2D, Point3D, Points, Points2D, Points3D, Size3DArray, View
 from .args import alias_kwargs, arg_default, arg_to_list
 from .assertions import assert_image_shapes, assert_orientation

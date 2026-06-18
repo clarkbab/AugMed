@@ -190,20 +190,43 @@ def bubble_args(*inner_fns: Callable) -> Callable:
 
 def expand_range_arg(
     arg: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor,
+    # Allows us to switch between shorthands:
+    # Cross-axis asymmetric range definitions:
+    # (0.8, 1.2) -> (0.8, 1.2, 0.8, 1.2, 0.8, 1.2), e.g. scaling for 3D
+    # And per-axis symmetric range definitions:
+    # (5, 5, 10) -> (-5, 5, -5, 5, -10, 10) e.g. translation for 3D
+    # Of course the major shorthand remains intact (is not affected by this kwarg):
+    # 5 -> (-5, 5, -5, 5, -5, 5) e.g. rotation for 3D
+    per_axis: bool = True,
+    caller: str | None = None,
     check_range: Literal['<', '<=', '>', '>='] | None = None,
     dim: int = 3,   # Could be 2/3 for spatial or 1 for intensity.
     negate_lower: bool = False,
     vals_per_dim: int = 2,
     ) -> Tuple[Number, ...]:
+    assert vals_per_dim % 2 == 0
+
     # Expand to the full number of args.
     if isinstance(arg, (int, float)):
+        # Single values are expanded to all dims.
+        # If we have 2 vals per dim we end up with (-v, v) for each dim.
+        # If we have 4 vals per dim we end up with (-v, v, -v, v) for each dim
         arg = (-arg if negate_lower else arg, arg) * (vals_per_dim // 2) * dim
     elif isinstance(arg, (list, tuple, np.ndarray, torch.Tensor)):
-        arg = tuple(np.array(arg).flatten())
-        if len(arg) == vals_per_dim // 2:
-            arg = arg * 2 * dim
-        elif len(arg) == vals_per_dim:
-            arg = arg * dim
+        arg = arg_to_list(arg, (int, float))
+        full_len = vals_per_dim * dim
+        if per_axis:
+            # E.g. (5, 5, 10) -> (-5, 5, -5, 5, -10, 10) for 3D with negate_lower=True, vals_per_dim=2.
+            if len(arg) == dim:
+                arg = tuple(v for mag in arg for v in ((-mag if negate_lower else mag, mag) * (vals_per_dim // 2)))
+            elif len(arg) != full_len:
+                raise ValueError(f"{caller} must have length {dim} (per-axis magnitudes) or {full_len} (fully specified), got {len(arg)}.")
+        else:
+            # E.g. (0.8, 1.2) -> (0.8, 1.2, 0.8, 1.2, 0.8, 1.2) for 3D with vals_per_dim=2.
+            if len(arg) == vals_per_dim:
+                arg = arg * dim
+            elif len(arg) != full_len:
+                raise ValueError(f"{caller} must have length {vals_per_dim} (broadcast to all dims) or {full_len} (fully specified), got {len(arg)}.")
 
     # Check ranges within the expanded args.
     if check_range is not None:

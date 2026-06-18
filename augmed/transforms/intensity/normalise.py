@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ...typing import Number
+from ...typing import Dist, Number
 from .intensity import IntensityTransform, RandomIntensityTransform
 
 # How do we incorporate different normalisation strategies?
@@ -116,5 +116,9 @@ class RandomNormalise(RandomIntensityTransform):
         super().__init__(**kwargs)
         # Randomise mean/std using some range.
 
-    def freeze(self) -> Normalise:
+    def freeze(
+        self,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> Normalise:
         pass

@@ -1,12 +1,13 @@
+from jaxtyping import Float32
 import numpy as np
 import torch
 from typing import Any, Dict, List, Literal, Tuple
 
-from ..config import get_dim
-from ..typing import AffineMatrix, BatchChannelImage, BatchImage, BatchLabelImage, ChannelImage, Image, ImagesInput, ImageOutputs, LabelImage, Number, Points, PointsInput, PointsOutputs, SamplingGrid, Size, SpatialDim, TransformParams
+from ..defaults import get_dim, get_dist, get_dist_std, get_fill, get_filter_offgrid, get_interpolation, get_p, get_seed, get_verbose
+from ..typing import AffineMatrix, BatchChannelImage, BatchImage, BatchLabelImage, ChannelImage, Dist, Image, ImagesInput, ImageOutputs, LabelImage, Number, Points, PointsInput, PointsOutputs, SamplingGrid, Size, SpatialAxis, SpatialDim, TransformParams
 from ..utils.args import alias_kwargs, arg_default, arg_to_list
-from ..utils.assertions import assert_dim
-from ..utils.conversion import to_return_format
+from ..utils.assertions import assert_dim, assert_dist, assert_dist_std, assert_fill, assert_filter_offgrid, assert_interpolation, assert_p, assert_seed
+from ..utils.conversion import to_return_format, to_tensor
 from ..utils.geometry import spatial_size
 from ..utils.logging import logger
 from ..utils.python import get_private_attr, set_private_attr, wrap_quotes
@@ -17,14 +18,23 @@ class Transform:
         self,
         debug: bool = False,
         device: torch.device | Literal['cpu', 'cuda'] | None = None,
+        # These params fall back to config defaults (env var or conf.set_<param>) when not passed explicitly.
+        # They can also be overridden per-call during transform_images/points.
         dim: SpatialDim | None = None,
-        fill: Number | Literal['border', 'max', 'min', 'reflection', 'zeros'] = 'min',
-        filter_offgrid: bool | SpatialDim | List[SpatialDim] = True,
-        interpolation: Literal['bicubic', 'bilinear', 'nearest'] = 'bilinear',
-        verbose: bool = False,
+        fill: Number | Literal['border', 'max', 'min', 'reflection', 'zeros'] | None = None,
+        filter_offgrid: bool | SpatialAxis | List[SpatialAxis] | None = None,
+        interpolation: Literal['bicubic', 'bilinear', 'nearest'] | None = None,
+        verbose: bool | None = None,
         ) -> None:
         dim = arg_default(dim, dim, get_dim())
-        assert_dim(dim)
+        assert_dim(dim, caller='Transform.__init__')
+        fill = arg_default(fill, fill, get_fill())
+        assert_fill(fill, caller='Transform.__init__')
+        filter_offgrid = arg_default(filter_offgrid, filter_offgrid, get_filter_offgrid())
+        assert_filter_offgrid(filter_offgrid, caller='Transform.__init__')
+        interpolation = arg_default(interpolation, interpolation, get_interpolation())
+        assert_interpolation(interpolation, caller='Transform.__init__')
+        verbose = arg_default(verbose, verbose, get_verbose())
         set_private_attr(self, '__debug', debug)
         set_private_attr(self, '__device', torch.device(device) if isinstance(device, str) else device)
         set_private_attr(self, '__dim', dim)
@@ -216,7 +226,7 @@ class Transform:
         *data: ImagesInput | PointsInput | List[ImagesInput | PointsInput],
         affine: AffineMatrix | None = None,
         fill: Number | Literal['border', 'max', 'min', 'reflection', 'zeros'] | None = None,
-        filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
+        filter_offgrid: bool | SpatialAxis | List[SpatialAxis] | None = None,
         interpolation: Literal['bicubic', 'bilinear', 'nearest'] | None = None,
         return_grid: bool = False,
         return_filtered: bool = False,
@@ -303,14 +313,28 @@ class Transform:
         raise ValueError("Subclasses of 'Transform' must implement 'transform_points' method.")
 
 class RandomTransform(Transform):
+    # Might not be a good idea to use 'alias_kwargs' here
+    # as it might clash with transform-specific kwarg aliases?
     def __init__(
         self,
-        p: Number = 1.0,    # What proportion of the time is the transform applied? Un-applied transforms resolve to 'Identity' when frozen.
+        dist: Literal['gaussian', 'uniform'] | None = None,
+        dist_std: float | None = None,
+        p: Number | None = None,    # What proportion of the time is the transform applied? Un-applied transforms resolve to 'Identity' when frozen.
         seed: int | None = None,
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
+        dist = arg_default(dist, dist, get_dist())
+        assert_dist(dist, caller='RandomTransform.__init__')
+        self.set_dist(dist)
+        dist_std = arg_default(dist_std, dist_std, get_dist_std())
+        assert_dist_std(dist_std, caller='RandomTransform.__init__')
+        set_private_attr(self, '__dist_std', dist_std)
+        p = arg_default(p, p, get_p())
+        assert_p(p, caller='RandomTransform.__init__')
         set_private_attr(self, '__p', p)
+        seed = arg_default(seed, seed, get_seed())
+        assert_seed(seed, caller='RandomTransform.__init__')
         self.set_seed(seed)
 
     def freeze(
@@ -334,13 +358,38 @@ class RandomTransform(Transform):
         ) -> TransformParams:
         return super().params(p=get_private_attr(self, '__p'), **kwargs)
 
-    # Can be called by Pipeline to set sub-transforms random seeds.
+    # Can be called by Pipeline to set sub-transform's random dists.
+    def set_dist(
+        self,
+        dist: Dist, 
+        ) -> None:
+        assert_dist(dist, caller='set_dist')
+        set_private_attr(self, '__dist', dist)
+
+    # Can be called by Pipeline to set sub-transform's random seeds.
     def set_seed(
         self,
         seed: int | None = None,
         ) -> None:
         set_private_attr(self, '__seed', seed)
         set_private_attr(self, '__rng', np.random.default_rng(seed=seed))
+
+    def draw_from_range(
+        self,
+        range: Float32[torch.Tensor, "2"] | Float32[torch.Tensor, "2 D"] | Float32[torch.Tensor, "2 2 D"],
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> Float32[torch.Tensor, "1"] | Float32[torch.Tensor, "D"] | Float32[torch.Tensor, "2 D"]:
+        dist = dist if dist is not None else get_private_attr(self, '__dist')
+        dist_std = dist_std if dist_std is not None else get_private_attr(self, '__dist_std')
+        if dist == 'gaussian':
+            mean = (range[0] + range[1]) / 2
+            std = (range[1] - range[0]) / (2 * dist_std)
+            draw = to_tensor(get_private_attr(self, '__rng').normal(loc=mean, scale=std))
+        elif dist == 'uniform':
+            n = 1 if range.ndim == 1 else tuple(range.shape[1:])
+            draw = to_tensor(get_private_attr(self, '__rng').random(n)) * (range[1] - range[0]) + range[0]
+        return draw
 
     def __str__(
         self,
@@ -359,6 +408,8 @@ class RandomTransform(Transform):
     def transform(
         self,
         *data: ImagesInput | PointsInput,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
         return_params: bool = False,
         **kwargs,
         ) -> Image | LabelImage | Points | List[Image | LabelImage | Points | List[SamplingGrid] | TransformParams]:
@@ -368,7 +419,7 @@ class RandomTransform(Transform):
         self.infer_dim(images=images, points=points)
 
         # Delegate to frozen transform.
-        t_frozen = self.freeze()
+        t_frozen = self.freeze(dist=dist, dist_std=dist_std)
         results = t_frozen.transform(*data, **kwargs)
 
         # Convert to return format.
@@ -383,11 +434,13 @@ class RandomTransform(Transform):
     def transform_images(
         self,
         *args,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
         return_params: bool = False,
         **kwargs,
         ) -> ImageOutputs:
         # Delegate to frozen transform.
-        t_frozen = self.freeze()
+        t_frozen = self.freeze(dist=dist, dist_std=dist_std)
         results = t_frozen.transform_images(*args, **kwargs)
 
         # Add optional "params".
@@ -402,11 +455,13 @@ class RandomTransform(Transform):
     def transform_points(
         self,
         *args,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
         return_params: bool = False,
         **kwargs,
         ) -> PointsOutputs:
         # Delegate to frozen transform.
-        t_frozen = self.freeze()
+        t_frozen = self.freeze(dist=dist, dist_std=dist_std)
         results = t_frozen.transform_points(*args, **kwargs)
 
         # Convert to return format.

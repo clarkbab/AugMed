@@ -5,7 +5,7 @@ import torch
 import torch
 from typing import Tuple
 
-from ....typing import Number, TransformParams
+from ....typing import Dist, Number, TransformParams
 from ....utils.args import alias_kwargs
 from ....utils.conversion import to_tensor, to_tuple
 from ....utils.python import get_private_attr
@@ -71,7 +71,11 @@ class RandomTranslate(RandomAffine):
             **kwargs,
         )
 
-    def freeze(self) -> Translate | Identity:
+    def freeze(
+        self,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> Translate | Identity:
         should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
             return Identity(dim=self.__dim)
@@ -79,11 +83,9 @@ class RandomTranslate(RandomAffine):
         # Draw the translation parameters.
         trans_draw = trans_p_draw = None
         if self.__translation_range is not None:
-            draw = to_tensor(self.__rng.random(self.__dim))
-            trans_draw = draw * (self.__translation_range[1] - self.__translation_range[0]) + self.__translation_range[0]
+            trans_draw = self.draw_from_range(self.__translation_range, dist=dist, dist_std=dist_std)
         if self.__translation_p_range is not None:
-            draw = to_tensor(self.__rng.random(self.__dim))
-            trans_p_draw = draw * (self.__translation_p_range[1] - self.__translation_p_range[0]) + self.__translation_p_range[0]
+            trans_p_draw = self.draw_from_range(self.__translation_p_range, dist=dist, dist_std=dist_std)
 
         params = dict(
             translation=trans_draw,

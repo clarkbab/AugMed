@@ -5,7 +5,7 @@ import torch
 import torch
 from typing import Literal, Tuple
 
-from ....typing import Number, Point, TransformParams
+from ....typing import Dist, Number, Point, TransformParams
 from ....utils.args import alias_kwargs
 from ....utils.conversion import to_tensor, to_tuple
 from ....utils.python import get_private_attr, wrap_quotes
@@ -82,14 +82,17 @@ class RandomRotate(RandomAffine):
             **kwargs,
         )
 
-    def freeze(self) -> Rotate | Identity:
+    def freeze(
+        self,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> Rotate | Identity:
         rotation_range = get_private_attr(self, '__rotation_range')
         should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
             return Identity(dim=self.__dim)
 
-        draw = to_tensor(self.__rng.random(self.__dim))
-        rot_draw = draw * (rotation_range[1] - rotation_range[0]) + rotation_range[0]
+        rot_draw = self.draw_from_range(rotation_range, dist=dist, dist_std=dist_std)
         params = dict(
             centre=self.__centre,
             centre_offset=self.__centre_offset,

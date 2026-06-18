@@ -4,8 +4,8 @@ import numpy as np
 import torch
 from typing import Literal, Tuple
 
-from ....config import get_dim
-from ....typing import Number, Point, SpatialDim, TransformParams
+from ....defaults import get_dim
+from ....typing import Dist, Number, Point, SpatialDim, TransformParams
 from ....utils.args import alias_kwargs, arg_default, arg_to_list
 from ....utils.conversion import to_tensor, to_tuple
 from ...identity import Identity
@@ -87,11 +87,17 @@ class RandomFlip(RandomAffine):
     def __expand_args(self) -> None:
         self.__flip = to_tensor(arg_to_list(self.__flip, (int, float), broadcast=self.__dim))
 
-    def freeze(self) -> Flip | Identity:
+    def freeze(
+        self,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> Flip | Identity:
         should_apply = self.__rng.random() < self.__p
         if not should_apply:
             return Identity(dim=self.__dim)
 
+        # Doesn't use RandomTransform.draw as it doesn't make sense to
+        # (potentially) use Gaussian for this.
         draw = to_tensor(self.__rng.random(self.__dim))
         flip_draw = draw < self.__flip
         params = dict(

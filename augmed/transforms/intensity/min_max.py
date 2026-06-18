@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 from typing import Tuple
 
-from ...typing import ImageTensor, Number, TransformParams
+from ...typing import Dist, ImageTensor, Number, TransformParams
 from ...utils.args import alias_kwargs, expand_range_arg
 from ...utils.assertions import assert_range
 from ...utils.conversion import to_tensor, to_tuple
@@ -78,16 +78,17 @@ class RandomMinMax(RandomIntensityTransform):
         assert_range(max_range, dim, 'max')
         self.__max_range = to_tensor(max_range)
 
-    def freeze(self) -> MinMax | Identity:
+    def freeze(
+        self,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> MinMax | Identity:
         should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
             return Identity(dim=self.__dim)
 
-        dim = 1    # Dim=1 for all intensity transforms.
-        draw = to_tensor(self.__rng.random(dim))
-        min_draw = ((self.__min_range[1] - self.__min_range[0]) * draw + self.__min_range[0]).item()
-        draw = to_tensor(self.__rng.random(dim))
-        max_draw = ((self.__max_range[1] - self.__max_range[0]) * draw + self.__max_range[0]).item()
+        min_draw = self.draw_from_range(self.__min_range, dist=dist, dist_std=dist_std).item()
+        max_draw = self.draw_from_range(self.__max_range, dist=dist, dist_std=dist_std).item()
         params = dict(
             max=max_draw,
             min=min_draw,

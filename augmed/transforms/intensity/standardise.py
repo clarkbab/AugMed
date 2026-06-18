@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from typing import Tuple
 
-from ...typing import ImageTensor, Number, SpatialDim, TransformParams
+from ...typing import Dist, ImageTensor, Number, SpatialDim, TransformParams
 from ...utils.args import alias_kwargs, expand_range_arg
 from ...utils.assertions import assert_range
 from ...utils.conversion import to_tensor, to_tuple
@@ -91,16 +91,17 @@ class RandomStandardise(RandomIntensityTransform):
         assert_range(std_range, dim, 'std')
         self.__std_range = to_tensor(std_range)
 
-    def freeze(self) -> Standardise | Identity:
+    def freeze(
+        self,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> Standardise | Identity:
         should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
             return Identity(dim=self.__dim)
 
-        dim = 1    # Dim=1 for all intensity transforms.
-        draw = to_tensor(self.__rng.random(dim))
-        mean_draw = ((self.__mean_range[1] - self.__mean_range[0]) * draw + self.__mean_range[0]).item()
-        draw = to_tensor(self.__rng.random(dim))
-        std_draw = ((self.__std_range[1] - self.__std_range[0]) * draw + self.__std_range[0]).item()
+        mean_draw = self.draw_from_range(self.__mean_range, dist=dist, dist_std=dist_std).item()
+        std_draw = self.draw_from_range(self.__std_range, dist=dist, dist_std=dist_std).item()
 
         params = dict(
             mean=mean_draw,

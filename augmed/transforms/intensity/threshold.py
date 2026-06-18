@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 from typing import Tuple
 
-from ...typing import ImageTensor, Number, TransformParams
+from ...typing import Dist, ImageTensor, Number, TransformParams
 from ...utils.args import alias_kwargs
 from ...utils.assertions import assert_range
 from ...utils.conversion import to_tensor, to_tuple
@@ -39,14 +39,17 @@ class RandomThreshold(RandomIntensityTransform):
         if self.__max_range is not None:
             assert_range(self.__max_range, 1, 'max')
 
-    def freeze(self) -> Threshold | Identity:
+    def freeze(
+        self,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> Threshold | Identity:
         should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
             return Identity(dim=self.__dim)
 
-        draw = to_tensor(self.__rng.random(2))
-        min_draw = draw[0] * (self.__min_range[1] - self.__min_range[0]) + self.__min_range[0] if self.__min_range is not None else None
-        max_draw = draw[0] * (self.__max_range[1] - self.__max_range[0]) + self.__max_range[0] if self.__max_range is not None else None
+        min_draw = self.draw_from_range(self.__min_range, dist=dist, dist_std=dist_std).item() if self.__min_range is not None else None
+        max_draw = self.draw_from_range(self.__max_range, dist=dist, dist_std=dist_std).item() if self.__max_range is not None else None
         params = dict(
             max=max_draw,
             min=min_draw,

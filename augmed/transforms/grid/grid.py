@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from typing import List, Literal
 
-from ...typing import AffineMatrix, ImagesInput, ImageOutputs, Number, PointsInput, PointsOutputs, SamplingGridTensor, SpatialDim
+from ...typing import AffineMatrix, ImagesInput, ImageOutputs, Number, PointsInput, PointsOutputs, SamplingGridTensor, SpatialAxis, SpatialDim
 from ...utils.args import alias_kwargs, arg_to_list
 from ...utils.assertions import assert_image_shapes, assert_image_sizes, assert_points_shapes
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
@@ -91,7 +91,7 @@ class GridTransform(Transform):
     def transform_points(
         self,
         points: PointsInput,
-        filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
+        filter_offgrid: bool | SpatialAxis | List[SpatialAxis] | None = None,
         return_filtered: bool = False,
         **kwargs,  # Allows them to pass kwargs that work for other transforms, e.g. 'affine'.
         ) -> PointsOutputs:

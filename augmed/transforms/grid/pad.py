@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from typing import List, Literal, Tuple
 
-from ...typing import AffineMatrix, Number, PointsInput, PointsOutputs, SamplingGridTensor, Size, SpatialDim, TransformParams
+from ...typing import AffineMatrix, Dist, Number, PointsInput, PointsOutputs, SamplingGridTensor, Size, SpatialAxis, SpatialDim, TransformParams
 from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg
 from ...utils.assertions import assert_points_shapes, assert_range
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
@@ -141,7 +141,7 @@ class Pad(GridTransform):
         points: PointsInput,
         # TODO: Alter filter_offgrid part as pad can never move points off-grid.
         affine: AffineMatrix | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
-        filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
+        filter_offgrid: bool | SpatialAxis | List[SpatialAxis] | None = None,
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
         size: Size | None = None,           # Required for filtering off-grid points.
@@ -254,25 +254,27 @@ class RandomPad(RandomGridTransform):
         self.__centre_offset_range = centre_offset_range
         self.__symmetric_t = symmetric
 
-    def freeze(self) -> Pad | Identity:
+    def freeze(
+        self,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> Pad | Identity:
         should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
             return Identity(dim=self.__dim)
 
-        draw = to_tensor(self.__rng.random((2, self.__dim)))
         if self.__add_range is not None:
-            add_draw = draw * (self.__add_range[1] - self.__add_range[0]) + self.__add_range[0]
+            add_draw = self.draw_from_range(self.__add_range, dist=dist, dist_std=dist_std)
             sym_axes = torch.argwhere(self.__symmetric_t).flatten()
             add_draw[1, sym_axes] = add_draw[0, sym_axes]
             margin_draw = None
             centre_offset_draw = None
         else:
             add_draw = None
-            margin_draw = draw * (self.__margin_range[1] - self.__margin_range[0]) + self.__margin_range[0]
+            margin_draw = self.draw_from_range(self.__margin_range, dist=dist, dist_std=dist_std)
             sym_axes = torch.argwhere(self.__symmetric_t).flatten()
             margin_draw[1, sym_axes] = margin_draw[0, sym_axes]
-            draw = to_tensor(self.__rng.random(self.__dim))
-            centre_offset_draw = draw * (self.__centre_offset_range[1] - self.__centre_offset_range[0]) + self.__centre_offset_range[0]
+            centre_offset_draw = self.draw_from_range(self.__centre_offset_range, dist=dist, dist_std=dist_std)
         params = dict(
             add=add_draw.T.flatten() if add_draw is not None else None,
             centre=self.__centre,

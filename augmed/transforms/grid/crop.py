@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from typing import List, Literal, Tuple
 
-from ...typing import AffineMatrix, Number, Point, PointsInput, PointsOutputs, Range2PerDim, Range4PerDim, SamplingGridTensor, Size, SpatialDim, TransformParams
+from ...typing import AffineMatrix, Dist, Number, Point, PointsInput, PointsOutputs, Range2PerAxis, Range4PerAxis, SamplingGridTensor, Size, SpatialAxis, SpatialDim, TransformParams
 from ...utils.args import alias_kwargs, arg_default, arg_to_list, expand_range_arg
 from ...utils.assertions import assert_points_shapes, assert_range
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
@@ -168,7 +168,7 @@ class Crop(GridTransform):
         self,
         points: PointsInput,
         affine: AffineMatrix | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
-        filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
+        filter_offgrid: bool | SpatialAxis | List[SpatialAxis] | None = None,
         return_filtered: bool = False,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
@@ -236,12 +236,12 @@ class RandomCrop(RandomGridTransform):
         # 5. Specify an output size and vary the crop centre.
         # Must keep 'centre' and 'centre_offset' separate so we can specify image centre using 'image-centre'.
         centre: Point | Literal['image-centre'] | None = 'image-centre',
-        centre_offset: Range2PerDim = 0.0,
-        margin: Range4PerDim | None = None,
-        remove: Range4PerDim | None = None,
+        centre_offset: Range2PerAxis = 0.0,
+        margin: Range4PerAxis | None = None,
+        remove: Range4PerAxis | None = None,
         # Whilst margin gives more flexibility - the user can specify assymetric margins - size
         # is a convenience method that gives symmetric margins.
-        size: Range2PerDim | None = None,
+        size: Range2PerAxis | None = None,
         # Cropped amounts are the same at both ends of each axis.
         # This should be configured per axis really, for example we might want want symmetry
         # along the x-axis only.
@@ -290,31 +290,31 @@ class RandomCrop(RandomGridTransform):
                     raise ValueError(f"Cannot create symmetric crops for axis {i} with crop ranges {cr_axis_vals}.")
             self.__remove_range = to_tensor(remove_range).reshape(self.__dim, 2, 2).T
 
-    def freeze(self) -> Crop | Identity:
+    def freeze(
+        self,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> Crop | Identity:
         should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
             return Identity(dim=self.__dim)
 
         if self.__margin_range is not None or self.__size_range is not None:
-            draw = to_tensor(self.__rng.random((2, self.__dim)))
-            centre_offset_draw = to_tensor(self.__rng.random(self.__dim)) * (self.__centre_offset_range[1] - self.__centre_offset_range[0]) + self.__centre_offset_range[0]
+            centre_offset_draw = self.draw_from_range(self.__centre_offset_range, dist=dist, dist_std=dist_std)
             params = dict(
                 centre=self.__centre,
                 centre_offset=centre_offset_draw,
             )
             if self.__margin_range is not None:
-                draw = to_tensor(self.__rng.random((2, self.__dim)))
-                margin_draw = draw * (self.__margin_range[1] - self.__margin_range[0]) + self.__margin_range[0]
+                margin_draw = self.draw_from_range(self.__margin_range, dist=dist, dist_std=dist_std)
                 sym_axes = torch.argwhere(self.__symmetric_t).flatten()
                 margin_draw[1, sym_axes] = margin_draw[0, sym_axes]
                 params['margin'] = margin_draw.T.flatten()
             elif self.__size_range is not None:
-                draw = to_tensor(self.__rng.random(self.__dim))
-                size_draw = draw * (self.__size_range[1] - self.__size_range[0]) + self.__size_range[0]
+                size_draw = self.draw_from_range(self.__size_range, dist=dist, dist_std=dist_std)
                 params['size'] = size_draw.flatten()
         elif self.__remove_range is not None:
-            draw = to_tensor(self.__rng.random((2, self.__dim)))
-            remove_draw = draw * (self.__remove_range[1] - self.__remove_range[0]) + self.__remove_range[0]
+            remove_draw = self.draw_from_range(self.__remove_range, dist=dist, dist_std=dist_std)
             sym_axes = torch.argwhere(self.__symmetric_t).flatten()
             remove_draw[1, sym_axes] = remove_draw[0, sym_axes]
             params = dict(

@@ -5,7 +5,7 @@ import torch
 import torch
 from typing import List, Literal, Tuple
 
-from ....typing import AffineMatrix, AffineMatrixTensor, Number, Point, PointsInput, PointsOutputs, PointsTensor, Range2PerDim, SamplingGrid, Size, SpatialDim, TransformParams
+from ....typing import AffineMatrix, AffineMatrixTensor, Dist, Number, Point, PointsInput, PointsOutputs, PointsTensor, Range2PerAxis, SamplingGrid, Size, SpatialAxis, SpatialDim, TransformParams
 from ....utils.args import alias_kwargs, arg_default, arg_to_list, expand_range_arg
 from ....utils.assertions import assert_points_shapes, assert_range
 from ....utils.conversion import to_return_format, to_tensor, to_tuple
@@ -15,9 +15,9 @@ from ....utils.python import get_group_device, get_private_attr, set_private_att
 from ... import Identity
 from ..spatial import RandomSpatialTransform, SpatialTransform
 
-DEFAULT_ROTATION_RANGE = (-15.0, 15.0)
+DEFAULT_ROTATION_RANGE = 15.0
 DEFAULT_SCALING_RANGE = (0.8, 1.2)
-DEFAULT_TRANSLATION_P_RANGE = (-0.1, 0.1)
+DEFAULT_TRANSLATION_P_RANGE = 0.1
 
 # Flip, Rotation, Translation (and others) should probably subclass this.
 class Affine(SpatialTransform):
@@ -33,17 +33,17 @@ class Affine(SpatialTransform):
     )
     def __init__(
         self,
-        rotation: Range2PerDim | None = 0.0,
+        rotation: Range2PerAxis | None = 0.0,
         rotation_centre: Point | Literal['image-centre'] = 'image-centre',
-        rotation_centre_offset: Range2PerDim = 0.0,
-        scaling: Range2PerDim | None = 1.0,
+        rotation_centre_offset: Range2PerAxis = 0.0,
+        scaling: Range2PerAxis | None = 1.0,
         scaling_centre: Point | Literal['image-centre'] = 'image-centre',
-        scaling_centre_offset: Range2PerDim = 0.0,
+        scaling_centre_offset: Range2PerAxis = 0.0,
         # Why do we set both to None?
         # We don't want the user to have to override the default, (translation_p=0.0) just to
         # use translation.
-        translation: Range2PerDim | None = None,
-        translation_p: Range2PerDim | None = None,
+        translation: Range2PerAxis | None = None,
+        translation_p: Range2PerAxis | None = None,
         **kwargs,
         ) -> None:
         super().__init__(**kwargs)
@@ -320,7 +320,7 @@ class Affine(SpatialTransform):
         self,
         points: PointsInput,
         affine: AffineMatrix | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
-        filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,  # Filter off-grid points, or those that are off-grid along a certain axis.
+        filter_offgrid: bool | SpatialAxis | List[SpatialAxis] | None = None,  # Filter off-grid points, or those that are off-grid along a certain axis.
         # grid: SamplingGrid | None = None,   # Required for filtering off-grid points and some transforms, e.g. Rotate.
         return_filtered: bool = False,
         size: Size | None = None,           # Required for filtering off-grid points.
@@ -420,7 +420,7 @@ class RandomAffine(RandomSpatialTransform):
             assert_range(rotation_centre_offset_range, dim, 'rotation_centre_offset')
             rotation_centre_offset_range = to_tensor(rotation_centre_offset_range).reshape(dim, 2).T
         if get_private_attr(self, '__scaling') is not None:
-            scaling_range = expand_range_arg(get_private_attr(self, '__scaling'), dim=dim, negate_lower=False)
+            scaling_range = expand_range_arg(get_private_attr(self, '__scaling'), caller='RandomAffine.scaling', dim=dim, negate_lower=False, per_axis=False)
             assert_range(scaling_range, dim, 'scaling')
             scaling_range = to_tensor(scaling_range).reshape(dim, 2).T
         if get_private_attr(self, '__scaling_centre_offset') is not None:
@@ -443,7 +443,11 @@ class RandomAffine(RandomSpatialTransform):
         set_private_attr(self, '__translation_range', translation_range)
         set_private_attr(self, '__translation_p_range', translation_p_range)
 
-    def freeze(self) -> Affine | Identity:
+    def freeze(
+        self,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> Affine | Identity:
         should_apply = get_private_attr(self, '__rng').random(1) < get_private_attr(self, '__p')
         if not should_apply:
             return Identity(dim=get_private_attr(self, '__dim'))
@@ -452,32 +456,26 @@ class RandomAffine(RandomSpatialTransform):
         rot_draw = rot_centre_offset_draw = scale_draw = scale_centre_offset_draw = trans_draw = trans_p_draw = None
         rotation_range = get_private_attr(self, '__rotation_range')
         if rotation_range is not None:
-            draw = to_tensor(get_private_attr(self, '__rng').random(get_private_attr(self, '__dim')))
-            rot_draw = to_tuple(draw * (rotation_range[1] - rotation_range[0]) + rotation_range[0]) if rotation_range is not None else None
+            rot_draw = to_tuple(self.draw_from_range(rotation_range, dist=dist, dist_std=dist_std))
         rotation_centre_offset_range = get_private_attr(self, '__rotation_centre_offset_range')
         if rotation_centre_offset_range is not None:
-            draw = to_tensor(get_private_attr(self, '__rng').random(get_private_attr(self, '__dim')))
-            rot_centre_offset_draw = to_tuple(draw * (rotation_centre_offset_range[1] - rotation_centre_offset_range[0]) + rotation_centre_offset_range[0])
+            rot_centre_offset_draw = to_tuple(self.draw_from_range(rotation_centre_offset_range, dist=dist, dist_std=dist_std))
 
         # Draw scaling params.
         scaling_range = get_private_attr(self, '__scaling_range')
         if scaling_range is not None:
-            draw = to_tensor(get_private_attr(self, '__rng').random(get_private_attr(self, '__dim')))
-            scale_draw = to_tuple(draw * (scaling_range[1] - scaling_range[0]) + scaling_range[0]) if scaling_range is not None else None
+            scale_draw = to_tuple(self.draw_from_range(scaling_range, dist=dist, dist_std=dist_std))
         scaling_centre_offset_range = get_private_attr(self, '__scaling_centre_offset_range')
         if scaling_centre_offset_range is not None:
-            draw = to_tensor(get_private_attr(self, '__rng').random(get_private_attr(self, '__dim')))
-            scale_centre_offset_draw = to_tuple(draw * (scaling_centre_offset_range[1] - scaling_centre_offset_range[0]) + scaling_centre_offset_range[0])
+            scale_centre_offset_draw = to_tuple(self.draw_from_range(scaling_centre_offset_range, dist=dist, dist_std=dist_std))
 
         # Draw translation params.
         translation_range = get_private_attr(self, '__translation_range')
         if translation_range is not None:
-            draw = to_tensor(get_private_attr(self, '__rng').random(get_private_attr(self, '__dim')))
-            trans_draw = to_tuple(draw * (translation_range[1] - translation_range[0]) + translation_range[0])
+            trans_draw = to_tuple(self.draw_from_range(translation_range, dist=dist, dist_std=dist_std))
         translation_p_range = get_private_attr(self, '__translation_p_range')
         if translation_p_range is not None:
-            draw = to_tensor(get_private_attr(self, '__rng').random(get_private_attr(self, '__dim')))
-            trans_p_draw = to_tuple(draw * (translation_p_range[1] - translation_p_range[0]) + translation_p_range[0])
+            trans_p_draw = to_tuple(self.draw_from_range(translation_p_range, dist=dist, dist_std=dist_std))
 
         params = dict(
             rotation=rot_draw,

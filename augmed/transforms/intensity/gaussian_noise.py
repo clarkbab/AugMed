@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from typing import Tuple
 
-from ...typing import ImageTensor, Number, SpatialDim, TransformParams
+from ...typing import Dist, ImageTensor, Number, SpatialDim, TransformParams
 from ...utils.args import alias_kwargs, arg_default, expand_range_arg
 from ...utils.assertions import assert_range
 from ...utils.conversion import to_tensor, to_tuple
@@ -141,7 +141,11 @@ class RandomGaussianNoise(RandomIntensityTransform):
         self.__std_range = std_range
         self.__std_p_range = std_p_range
 
-    def freeze(self) -> GaussianNoise | Identity:
+    def freeze(
+        self,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> GaussianNoise | Identity:
         should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
             return Identity(dim=self.__dim)
@@ -150,17 +154,13 @@ class RandomGaussianNoise(RandomIntensityTransform):
         dim = 1   # Dim=1 for all intensity transforms.
         mean_draw = mean_p_draw = std_draw = std_p_draw = None
         if self.__mean_range is not None:
-            draw = to_tensor(self.__rng.random(dim))
-            mean_draw = ((self.__mean_range[1] - self.__mean_range[0]) * draw + self.__mean_range[0]).item()
+            mean_draw = self.draw_from_range(self.__mean_range, dist=dist, dist_std=dist_std).item()
         if self.__mean_p_range is not None:
-            draw = to_tensor(self.__rng.random(dim))
-            mean_p_draw = ((self.__mean_p_range[1] - self.__mean_p_range[0]) * draw + self.__mean_p_range[0]).item()
+            mean_p_draw = self.draw_from_range(self.__mean_p_range, dist=dist, dist_std=dist_std).item()
         if self.__std_range is not None:
-            draw = to_tensor(self.__rng.random(dim))
-            std_draw = ((self.__std_range[1] - self.__std_range[0]) * draw + self.__std_range[0]).item()
+            std_draw = self.draw_from_range(self.__std_range, dist=dist, dist_std=dist_std).item()
         if self.__std_p_range is not None:
-            draw = to_tensor(self.__rng.random(dim))
-            std_p_draw = ((self.__std_p_range[1] - self.__std_p_range[0]) * draw + self.__std_p_range[0]).item()
+            std_p_draw = self.draw_from_range(self.__std_p_range, dist=dist, dist_std=dist_std).item()
 
         params = dict(
             mean=mean_draw,

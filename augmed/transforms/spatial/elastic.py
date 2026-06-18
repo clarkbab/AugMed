@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from typing import Literal, Tuple
 
-from ...typing import AffineMatrix, AffineMatrixTensor, ChannelImageTensor, Number, PointsInput, PointsOutputs, PointsTensor, Size, SpatialDim, TransformParams
+from ...typing import AffineMatrix, AffineMatrixTensor, ChannelImageTensor, Dist, Number, PointsInput, PointsOutputs, PointsTensor, Range2PerAxis, Size, SpatialDim, TransformParams
 from ...utils.args import alias_kwargs, arg_to_list, expand_range_arg
 from ...utils.assertions import assert_points_shapes, assert_range
 from ...utils.conversion import to_return_format, to_tensor, to_tuple
@@ -16,8 +16,8 @@ from .spatial import RandomSpatialTransform, SpatialTransform
 
 BATCHING_MEM_P = 0.25           # Proportion of total GPU used before batching kicks in.
 BATCHING_MIN_POINTS = int(1e5)       # Number of points above which batching is considered.
-N_ITER_MAX = 100                # Max iterations for forward points transform solve.
 CLOSENESS_TOL = 1e-6           # Tolerance for closeness in forward points transform solve, in mm. 
+N_ITER_MAX = 100                # Max iterations for forward points transform solve.
 
 # Defines a coarse grid of control points.
 # Random displacements are assigned at each control point.
@@ -36,10 +36,13 @@ class Elastic(SpatialTransform):
         self,
         batching_mem_p: float = BATCHING_MEM_P,
         control_spacing: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 50.0,
-        control_origin: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
-        displacement: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
+        control_origin: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 0.0,
+        displacement: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 10.0,
         method: Literal['bspline', 'cubic', 'linear'] = 'bspline',
         n_iter_max: int = N_ITER_MAX,
+        # As this transform includes random displacement vector draws, that can't be
+        # drawn during RandomTransform.freeze, we need a seed to ensure this transform
+        # is deterministic.
         seed: int = 42,
         use_batching: bool = True,
         **kwargs,
@@ -470,9 +473,9 @@ class RandomElastic(RandomSpatialTransform):
     def __init__(
         self, 
         batching_mem_p: float = BATCHING_MEM_P,
-        control_spacing: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 50.0,
-        control_origin: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
-        displacement: Number | Tuple[Number, ...] | np.ndarray | torch.Tensor = 20.0,
+        control_spacing: Range2PerAxis = 50.0,
+        control_origin: Range2PerAxis = 10.0,
+        displacement: Range2PerAxis = 10.0,
         # Can we randomise the fitting method too?
         method: Literal['bspline', 'cubic', 'linear'] = 'bspline',
         n_iter_max: int = N_ITER_MAX,
@@ -500,14 +503,17 @@ class RandomElastic(RandomSpatialTransform):
         assert_range(disp_range, self.__dim, 'displacement')
         self.__displacement_range = to_tensor(disp_range).reshape(self.__dim, 2).T
 
-    def freeze(self) -> Elastic | Identity:
+    def freeze(
+        self,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> Elastic | Identity:
         should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
             return Identity(dim=self.__dim)
 
-        draw = to_tensor(self.__rng.random(self.__dim))
-        control_spacing_draw = draw * (self.__control_spacing_range[1] - self.__control_spacing_range[0]) + self.__control_spacing_range[0]
-        control_origin_draw = draw * (self.__control_origin_range[1] - self.__control_origin_range[0]) + self.__control_origin_range[0]
+        control_spacing_draw = self.draw_from_range(self.__control_spacing_range, dist=dist, dist_std=dist_std)
+        control_origin_draw = self.draw_from_range(self.__control_origin_range, dist=dist, dist_std=dist_std)
         # We can't draw displacements here as we need the image to determine the number of control points.
         # However, we should pass a randomly-drawn seed.
         seed_draw = self.__rng.integers(1e9)   # Requires upper bound.

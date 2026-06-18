@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from typing import Tuple
 
-from ...typing import Number, SamplingGridTensor, Size, Spacing, SpatialDim, TransformParams
+from ...typing import Dist, Number, SamplingGridTensor, Size, Spacing, SpatialDim, TransformParams
 from ...utils.args import alias_kwargs, expand_range_arg
 from ...utils.conversion import to_tensor, to_tuple
 from ...utils.geometry import affine_origin, affine_spacing, create_affine, fov_width
@@ -158,22 +158,25 @@ class RandomResize(RandomGridTransform):
 
     # These are params that could be used to recreate the transform.
     # So they should match the input form (after expansion).
-    def freeze(self) -> Resize | Identity:
+    def freeze(
+        self,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> Resize | Identity:
         should_apply = self.__rng.random(1) < self.__p
         if not should_apply:
             return Identity(dim=self.__dim)
 
         # Draw resize params.
-        draw = to_tensor(self.__rng.random(self.__dim))
         size_draw = size_p_draw = spacing_draw = spacing_p_draw = None
         if self.__size_range is not None:
-            size_draw = (draw * (self.__size_range[1] - self.__size_range[0]) + self.__size_range[0]).type(torch.int32)
+            size_draw = self.draw_from_range(self.__size_range, dist=dist, dist_std=dist_std).type(torch.int32)
         elif self.__size_p_range is not None:
-            size_p_draw = draw * (self.__size_p_range[1] - self.__size_p_range[0]) + self.__size_p_range[0]
+            size_p_draw = self.draw_from_range(self.__size_p_range, dist=dist, dist_std=dist_std)
         elif self.__spacing_range is not None:
-            spacing_draw = draw * (self.__spacing_range[1] - self.__spacing_range[0]) + self.__spacing_range[0]
+            spacing_draw = self.draw_from_range(self.__spacing_range, dist=dist, dist_std=dist_std)
         elif self.__spacing_p_range is not None:
-            spacing_p_draw = draw * (self.__spacing_p_range[1] - self.__spacing_p_range[0]) + self.__spacing_p_range[0]
+            spacing_p_draw = self.draw_from_range(self.__spacing_p_range, dist=dist, dist_std=dist_std)
 
         params = dict(
             size=size_draw,

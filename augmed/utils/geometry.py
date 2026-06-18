@@ -2,7 +2,7 @@ import numpy as np
 import scipy
 import torch
 
-from ..config import get_dim
+from ..defaults import get_dim
 from ..typing import AffineMatrix, Box, BoxTensor, Image, LabelImage, Pixel, Pixels, Point, Points, SamplingGrid, Size, Spacing, SpatialDim, Voxel, Voxels
 from .args import arg_default
 from .conversion import to_numpy, to_tensor

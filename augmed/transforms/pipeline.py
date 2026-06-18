@@ -6,7 +6,7 @@ import torch
 import torch
 from typing import List, Literal, Tuple, Union
 
-from ..typing import AffineMatrix, AffineMatrixTensor, ImagesInput, ImageOutputs, Number, PointsInput, PointsOutputs, PointsTensor, SamplingGrid, Size, SpatialDim, TransformParams
+from ..typing import AffineMatrix, AffineMatrixTensor, Dist, ImagesInput, ImageOutputs, Number, PointsInput, PointsOutputs, PointsTensor, SamplingGrid, Size, SpatialAxis, SpatialDim, TransformParams
 from ..utils.args import alias_kwargs, arg_to_list
 from ..utils.assertions import assert_image_shapes, assert_image_sizes, assert_points_shapes
 from ..utils.conversion import to_return_format, to_tensor, to_tuple
@@ -303,7 +303,7 @@ class FrozenPipeline(Transform):
         self,
         points: PointsInput,
         affine: AffineMatrix | None = None,       # Required for some transforms, e.g. Rotate, to get centre of rotation.
-        filter_offgrid: bool | SpatialDim | List[SpatialDim] | None = None,
+        filter_offgrid: bool | SpatialAxis | List[SpatialAxis] | None = None,
         return_filtered: bool = False,
         size: Size | None = None,           # Required for filtering off-grid points.
         **kwargs,
@@ -437,8 +437,12 @@ class Pipeline(RandomTransform):
             type=self.__class__.__name__,
         ))
 
-    def freeze(self) -> FrozenPipeline:
-        transforms = [t.freeze() if isinstance(t, RandomTransform) else t for t in self.__transforms]
+    def freeze(
+        self,
+        dist: Dist | None = None,
+        dist_std: float | None = None,
+        ) -> FrozenPipeline:
+        transforms = [t.freeze(dist=dist, dist_std=dist_std) if isinstance(t, RandomTransform) else t for t in self.__transforms]
         return FrozenPipeline(
             transforms,
             debug=self.__debug,
